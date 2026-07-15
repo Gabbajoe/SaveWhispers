@@ -459,6 +459,49 @@ function SW:DeleteConversation(key)
     self:NotifyDataChanged()
 end
 
+-- Bulk-delete actions for the Settings "Danger Zone" - each is meant to be
+-- called only after a native confirmation popup (see StaticPopupDialogs in
+-- UI.lua), since none of these can be undone.
+function SW:DeleteAllDMs()
+    self.DB.conversations = {}
+    if self.ui then self.ui.selectedKey = nil end
+    self:NotifyDataChanged()
+end
+
+function SW:DeleteGuildHistory()
+    local guild = self.DB.groupChats and self.DB.groupChats.guild
+    if not guild then return end
+    guild.messages = {}
+    guild.lastActivity = 0
+    if self.ui and self.ui.selectedKey == "guild" then self.ui.selectedKey = nil end
+    self:NotifyDataChanged()
+end
+
+function SW:DeleteAllGroupSessions()
+    for key, conversation in pairs(self.DB.groupChats or {}) do
+        if type(conversation) == "table" and (conversation.channel == "party" or conversation.channel == "raid") then
+            self.DB.groupChats[key] = nil
+        end
+    end
+    self.DB.openPartySessionKey = nil
+    self.DB.openRaidSessionKey = nil
+    if self.ui then self.ui.selectedKey = nil end
+    self:NotifyDataChanged()
+end
+
+-- Wipes everything (DMs, Guild history, every Party/Raid session, every
+-- manually added channel), then restores the one permanent conversation
+-- InitDatabase always guarantees on load.
+function SW:DeleteAllChats()
+    self.DB.conversations = {}
+    self.DB.groupChats = {}
+    self.DB.openPartySessionKey = nil
+    self.DB.openRaidSessionKey = nil
+    if self.ui then self.ui.selectedKey = nil end
+    self:EnsureGroupConversation("guild")
+    self:NotifyDataChanged()
+end
+
 -- Name suggestions for the "Player / channel" and watchlist add-player
 -- fields: saved DMs plus current guild/party/raid rosters, deduplicated and
 -- filtered to whatever prefix the player has typed so far.

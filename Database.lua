@@ -9,6 +9,7 @@ SW.Database = {
             maxGroupMessages = 1500,
             maxGroupSessions = 200,
             sortByActivity = false,
+            uiTheme = "classic",
             uiScale = 1,
             chatScale = 1,
         },

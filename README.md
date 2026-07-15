@@ -21,6 +21,9 @@ Open it with `/sw` or the movable minimap button.
 - Class-colored sender names, resolved from the message's sender GUID.
 - A personal watchlist (star icon) for important players, plus pinning any conversation to the top of the list.
 - Conversations sort alphabetically by default, or by most recent activity if you turn that on in Settings — either way, Guild/Party/Raid/channel chat always stays above your DMs.
+- Filter pills (All / DMs / Guild / Group) above the conversation list to quickly narrow it down instead of scrolling through everything mixed together.
+- Settings > Danger Zone: delete all DMs, Guild Chat history, all Party/Raid sessions, or everything at once, each behind a confirmation popup.
+- Settings > UI Style: WoW Classic (default), an ElvUI-inspired flat theme, or Modern SaveWhispers — takes effect after a UI reload.
 - Select DMs mode to delete multiple conversations at once, or cancel the selection.
 - "Copy name" and "Export chat" popups with pre-selected text (WoW addons can't write to the OS clipboard directly, so these give you selectable text to Ctrl+C).
 - Combined suggestion dropdown + Tab-complete when typing a player or channel name.
@@ -48,6 +51,9 @@ Open it with `/sw` or the movable minimap button.
 - Fixed: a stray leading space in Party/Raid session subtitles like "( 14.07.2026 15:52)".
 - Fixed: a message box left focused could keep eating keystrokes (e.g. WASD) after closing the window or switching tabs.
 - Fixed: opening a busy Guild/Party/Raid chat could stutter - only the most recent messages are rendered now, and an existing conversation that was already over its message limit is trimmed back down immediately instead of over hundreds of new messages.
+- Conversation list filter pills (All / DMs / Guild / Group) to untangle Guild Chat and Party/Raid sessions from the DM list.
+- Settings > Danger Zone: buttons to delete all DMs, Guild Chat history, all Party/Raid sessions, or everything at once - each behind a confirmation popup.
+- Settings > UI Style: choose between WoW Classic (default), an ElvUI-inspired flat theme, or a new Modern SaveWhispers theme (applies after a UI reload).
 
 ### V1.0 (Author: Femboybaddie)
 

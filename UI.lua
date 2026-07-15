@@ -19,6 +19,73 @@ local DIALOG_BACKDROP = {
     insets = { left = 11, right = 12, top = 12, bottom = 11 },
 }
 
+-- Three selectable looks (Settings > UI Style). "classic" keeps every
+-- Blizzard template as-is (DIALOG_BACKDROP, UIPanelButtonTemplate,
+-- InsetFrameTemplate, InputBoxTemplate - unchanged from before this
+-- existed). "elvui"/"modern" are custom flat themes inspired by those
+-- aesthetics, built from plain WHITE8X8 backdrops rather than real
+-- integration with the actual ElvUI addon's skin API (that only works if
+-- ElvUI itself is installed, and is a much larger, separate feature).
+-- A theme change only takes effect after /reload, since Blizzard templates
+-- are chosen once at CreateFrame time and can't be swapped on an
+-- already-built widget - see the "Reload UI" button in Settings.
+local THEMES = {
+    classic = {
+        useNativeWidgets = true,
+        textColor = { 0.92, 0.92, 0.92 },
+        mutedColor = { 0.62, 0.62, 0.62 },
+        accentColor = { 1, 0.82, 0, 0.35 },
+    },
+    elvui = {
+        useNativeWidgets = false,
+        windowBackdropColor = { 0.045, 0.045, 0.045, 0.98 },
+        windowBorderColor = { 0.16, 0.16, 0.16, 1 },
+        insetBackdropColor = { 0.07, 0.07, 0.07, 0.9 },
+        insetBorderColor = { 0.16, 0.16, 0.16, 1 },
+        buttonColor = { 0.09, 0.09, 0.09, 1 },
+        buttonBorderColor = { 0.2, 0.2, 0.2, 1 },
+        editBackdropColor = { 0.05, 0.05, 0.05, 1 },
+        editBorderColor = { 0.2, 0.2, 0.2, 1 },
+        accentColor = { 0.85, 0.55, 0.1, 0.45 },
+        textColor = { 0.9, 0.9, 0.9 },
+        mutedColor = { 0.55, 0.55, 0.55 },
+    },
+    modern = {
+        useNativeWidgets = false,
+        -- Reuses the addon's own existing pink brand accent (#ef4f91,
+        -- already used in the title bar/minimap tooltip) instead of an
+        -- unrelated new color.
+        windowBackdropColor = { 0.07, 0.08, 0.10, 0.98 },
+        windowBorderColor = { 0.933, 0.31, 0.569, 1 },
+        insetBackdropColor = { 0.10, 0.11, 0.14, 0.9 },
+        insetBorderColor = { 0.933, 0.31, 0.569, 0.6 },
+        buttonColor = { 0.12, 0.13, 0.16, 1 },
+        buttonBorderColor = { 0.933, 0.31, 0.569, 0.5 },
+        editBackdropColor = { 0.10, 0.11, 0.14, 1 },
+        editBorderColor = { 0.933, 0.31, 0.569, 0.5 },
+        accentColor = { 0.933, 0.31, 0.569, 0.45 },
+        textColor = { 0.92, 0.92, 0.94 },
+        mutedColor = { 0.58, 0.58, 0.62 },
+    },
+}
+
+local function currentTheme()
+    return THEMES[SW.DB and SW.DB.settings and SW.DB.settings.uiTheme] or THEMES.classic
+end
+
+-- Shared by the main window and the popup frames (Copy/Members), which all
+-- used to hardcode DIALOG_BACKDROP directly.
+local function applyWindowBackdrop(frame, theme)
+    theme = theme or currentTheme()
+    if theme.useNativeWidgets then
+        frame:SetBackdrop(DIALOG_BACKDROP)
+    else
+        frame:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 2 })
+        frame:SetBackdropColor(unpack(theme.windowBackdropColor))
+        frame:SetBackdropBorderColor(unpack(theme.windowBorderColor))
+    end
+end
+
 local function text(parent, value, fontObject, r, g, b)
     local label = parent:CreateFontString(nil, "OVERLAY", fontObject or "GameFontHighlightSmall")
     label:SetJustifyH("LEFT")
@@ -27,11 +94,37 @@ local function text(parent, value, fontObject, r, g, b)
     return label
 end
 
--- Standard Blizzard button/edit box/inset templates: they already match the
--- rest of the game's UI, so there is no per-widget theme color to apply.
+-- Gives a template-less Button the same SetText/GetFontString/LockHighlight
+-- contract a templated one has, so every other call site (fitButton,
+-- active-pill LockHighlight, etc.) works unchanged regardless of theme.
+local function skinFlatButton(control, theme)
+    control:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+    control:SetBackdropColor(unpack(theme.buttonColor))
+    control:SetBackdropBorderColor(unpack(theme.buttonBorderColor))
+    control:RegisterForClicks("LeftButtonUp", "LeftButtonDown")
+    local fontString = control:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    fontString:SetPoint("CENTER")
+    fontString:SetTextColor(unpack(theme.textColor))
+    control:SetFontString(fontString)
+    local highlight = control:CreateTexture(nil, "HIGHLIGHT")
+    highlight:SetAllPoints()
+    highlight:SetColorTexture(theme.accentColor[1], theme.accentColor[2], theme.accentColor[3], theme.accentColor[4] or 0.35)
+    highlight:SetBlendMode("ADD")
+    control:SetHighlightTexture(highlight)
+    control.SW_disabledColor = { 0.45, 0.45, 0.45 }
+    control.SW_enabledColor = theme.textColor
+    control:HookScript("OnDisable", function(self) fontString:SetTextColor(unpack(self.SW_disabledColor)) end)
+    control:HookScript("OnEnable", function(self) fontString:SetTextColor(unpack(self.SW_enabledColor)) end)
+end
+
+-- Standard Blizzard button/edit box/inset templates for the "classic" theme;
+-- "elvui"/"modern" build the same widget without a template instead, using
+-- flat WHITE8X8 backdrops colored per-theme (see THEMES/skinFlatButton).
 local function button(parent, label, width, height)
-    local control = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    local theme = currentTheme()
+    local control = CreateFrame("Button", nil, parent, theme.useNativeWidgets and "UIPanelButtonTemplate" or BACKDROP)
     control:SetSize(width, height)
+    if not theme.useNativeWidgets then skinFlatButton(control, theme) end
     control:SetText(label or "")
     return control
 end
@@ -47,8 +140,10 @@ end
 -- A square button showing just an icon (pin/star), with the active state
 -- shown via the button's own highlight lock instead of swapping text labels.
 local function iconButton(parent, texture, tooltipText)
-    local control = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    local theme = currentTheme()
+    local control = CreateFrame("Button", nil, parent, theme.useNativeWidgets and "UIPanelButtonTemplate" or BACKDROP)
     control:SetSize(28, 24)
+    if not theme.useNativeWidgets then skinFlatButton(control, theme) end
     control.icon = control:CreateTexture(nil, "ARTWORK")
     control.icon:SetSize(14, 14)
     control.icon:SetPoint("CENTER", 0, 1)
@@ -66,7 +161,15 @@ end
 -- (click to pick) plus Tab-complete (accepts the top match), like the
 -- default chat edit box's player-name completion.
 local function edit(parent, width, height, hint, getSuggestions)
-    local field = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+    local theme = currentTheme()
+    local field = CreateFrame("EditBox", nil, parent, theme.useNativeWidgets and "InputBoxTemplate" or BACKDROP)
+    if not theme.useNativeWidgets then
+        field:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+        field:SetBackdropColor(unpack(theme.editBackdropColor))
+        field:SetBackdropBorderColor(unpack(theme.editBorderColor))
+        field:SetTextInsets(5, 5, 2, 2)
+        field:SetTextColor(unpack(theme.textColor))
+    end
     field:SetSize(width, height)
     field:SetFontObject("ChatFontNormal")
     field:SetAutoFocus(false)
@@ -156,7 +259,15 @@ local INSET_BACKDROP = {
 -- template name isn't present on this client, so a naming mismatch can
 -- never break the whole window from loading.
 local function numberField(parent, width, height)
-    local field = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+    local theme = currentTheme()
+    local field = CreateFrame("EditBox", nil, parent, theme.useNativeWidgets and "InputBoxTemplate" or BACKDROP)
+    if not theme.useNativeWidgets then
+        field:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+        field:SetBackdropColor(unpack(theme.editBackdropColor))
+        field:SetBackdropBorderColor(unpack(theme.editBorderColor))
+        field:SetTextInsets(5, 5, 2, 2)
+        field:SetTextColor(unpack(theme.textColor))
+    end
     field:SetSize(width, height)
     field:SetFontObject("ChatFontNormal")
     field:SetAutoFocus(false)
@@ -165,13 +276,27 @@ local function numberField(parent, width, height)
     return field
 end
 
+-- "classic" uses InsetFrameTemplate for the authentic recessed
+-- content-box look; "elvui"/"modern" (and, defensively, a client where the
+-- template name doesn't exist) use a themed flat backdrop instead.
 local function inset(parent)
-    local ok, frame = pcall(CreateFrame, "Frame", nil, parent, "InsetFrameTemplate")
-    if not ok or not frame then
+    local theme = currentTheme()
+    local frame
+    if theme.useNativeWidgets then
+        local ok, templated = pcall(CreateFrame, "Frame", nil, parent, "InsetFrameTemplate")
+        if ok and templated then frame = templated end
+    end
+    if not frame then
         frame = CreateFrame("Frame", nil, parent, BACKDROP)
         frame:SetBackdrop(INSET_BACKDROP)
-        frame:SetBackdropColor(0, 0, 0, 0.4)
-        frame:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
+        if theme.useNativeWidgets then
+            frame:SetBackdropColor(0, 0, 0, 0.4)
+            frame:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
+        else
+            frame:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+            frame:SetBackdropColor(unpack(theme.insetBackdropColor))
+            frame:SetBackdropBorderColor(unpack(theme.insetBorderColor))
+        end
     end
     return frame
 end
@@ -395,7 +520,11 @@ end
 
 function SW:CreateUI()
     if self.ui and self.ui.frame then return end
-    self.ui = { panels = {}, activeTab = "Messages", selectedKey = nil }
+    -- Snapshot of the theme this window was actually built with - a theme
+    -- change in Settings only takes effect after /reload (see THEMES below),
+    -- so Settings compares against this to know whether to show "Reload UI".
+    local appliedTheme = self.DB.settings.uiTheme or "classic"
+    self.ui = { panels = {}, activeTab = "Messages", selectedKey = nil, listFilter = "all", appliedTheme = appliedTheme }
     local frame = CreateFrame("Frame", "SaveWhispersFrame", UIParent, BACKDROP)
     setPixelSize(frame, 900, 620)
     -- "MEDIUM" is the strata Blizzard's own windows use by default
@@ -421,7 +550,7 @@ function SW:CreateUI()
     end
     frame:EnableMouse(true)
     frame:RegisterForDrag("LeftButton")
-    frame:SetBackdrop(DIALOG_BACKDROP)
+    applyWindowBackdrop(frame)
     local saved = self.DB.window or {}
     if saved.width and saved.height then
         setPixelSize(frame, math.min(maxWidth, math.max(700, saved.width)), math.min(maxHeight, math.max(480, saved.height)))
@@ -598,8 +727,25 @@ function SW:BuildMessagesPanel()
             SW:Print(result)
         end
     end)
+    -- Guild Chat and every individual Party/Raid session all lived in one
+    -- long mixed-together list with DMs, making it hard to find anything -
+    -- these filter pills narrow the same list down instead of duplicating
+    -- it into a separate tab.
+    local function filterPill(filterKey, label)
+        local pill = fitButton(button(panel.left, label, 10, 20), 12)
+        pill:SetScript("OnClick", function()
+            SW.ui.listFilter = filterKey
+            SW:RefreshUI()
+        end)
+        return pill
+    end
+    panel.filterAll = filterPill("all", "All")
+    panel.filterDM = filterPill("dm", "DMs")
+    panel.filterGuild = filterPill("guild", "Guild")
+    panel.filterGroup = filterPill("group", "Group")
+    flowRight(panel.left, -30, -88, 4, { panel.filterGroup, panel.filterGuild, panel.filterDM, panel.filterAll })
     panel.list = scroll(panel.left)
-    panel.list:SetPoint("TOPLEFT", 12, -92)
+    panel.list:SetPoint("TOPLEFT", 12, -114)
     panel.list:SetPoint("BOTTOMRIGHT", -30, 48)
     panel.deleteSelected = button(panel.left, "Delete selected", 122, 22)
     panel.deleteSelected:SetPoint("BOTTOMLEFT", 12, 12)
@@ -721,8 +867,33 @@ function SW:RefreshMessagesPanel()
     local panel = self.ui.panels.Messages
     if not panel then return end
     local conversations = self:GetSortedConversations(false)
+    local listFilter = self.ui.listFilter or "all"
+    if listFilter ~= "all" then
+        local filtered = {}
+        for _, conversation in ipairs(conversations) do
+            local include
+            if listFilter == "dm" then include = not conversation.system
+            elseif listFilter == "guild" then include = conversation.system and conversation.channel == "guild"
+            elseif listFilter == "group" then include = conversation.system and (conversation.channel == "party" or conversation.channel == "raid")
+            end
+            if include then filtered[#filtered + 1] = conversation end
+        end
+        conversations = filtered
+    end
+    for _, pill in ipairs({ panel.filterAll, panel.filterDM, panel.filterGuild, panel.filterGroup }) do
+        pill:UnlockHighlight()
+    end
+    local activePill = ({ all = panel.filterAll, dm = panel.filterDM, guild = panel.filterGuild, group = panel.filterGroup })[listFilter]
+    if activePill then activePill:LockHighlight() end
     if self.ui.selectedKey and not self:GetConversation(self.ui.selectedKey) then self.ui.selectedKey = nil end
-    if not self.ui.selectedKey and conversations[1] then self.ui.selectedKey = conversations[1].key end
+    -- Switching filter pills should switch the right-hand view to
+    -- something the filter actually shows, rather than keep displaying a
+    -- conversation (e.g. a DM) that's no longer part of the filtered list.
+    local selectedInView = false
+    for _, conversation in ipairs(conversations) do
+        if conversation.key == self.ui.selectedKey then selectedInView = true; break end
+    end
+    if not selectedInView and conversations[1] then self.ui.selectedKey = conversations[1].key end
     local maximum = math.max(1, math.floor(tonumber(self.DB.settings.maxConversations) or 200))
     local dmCount = 0
     for _ in pairs(self.DB.conversations or {}) do dmCount = dmCount + 1 end
@@ -735,7 +906,7 @@ function SW:RefreshMessagesPanel()
     -- buttons while they're actually visible; otherwise it should reach all
     -- the way down instead of leaving a dead gap above the panel border.
     panel.list:ClearAllPoints()
-    panel.list:SetPoint("TOPLEFT", panel.left, "TOPLEFT", 12, -92)
+    panel.list:SetPoint("TOPLEFT", panel.left, "TOPLEFT", 12, -114)
     panel.list:SetPoint("BOTTOMRIGHT", panel.left, "BOTTOMRIGHT", -30, self.ui.selectMode and 48 or 12)
     local content = panel.list.content
     poolStart(content)
@@ -1170,7 +1341,7 @@ function SW:ShowCopyPopup(title, content)
         frame:SetMovable(true)
         frame:EnableMouse(true)
         frame:RegisterForDrag("LeftButton")
-        frame:SetBackdrop(DIALOG_BACKDROP)
+        applyWindowBackdrop(frame)
         frame:SetScript("OnDragStart", function(self) self:StartMoving() end)
         frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
         frame.title = text(frame, "", "GameFontNormalLarge")
@@ -1220,7 +1391,7 @@ function SW:CreateMembersFrame()
     frame:SetMovable(true)
     frame:EnableMouse(true)
     frame:RegisterForDrag("LeftButton")
-    frame:SetBackdrop(DIALOG_BACKDROP)
+    applyWindowBackdrop(frame)
     frame:SetScript("OnDragStart", function(self) self:StartMoving() end)
     frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
     frame.title = text(frame, "Chat Members", "GameFontNormalLarge")
@@ -1388,6 +1559,51 @@ function SW:RefreshWatchlistPanel()
     content:SetSize(width, math.max(panel.list:GetHeight(), -y + 5))
 end
 
+-- Native Blizzard confirmation popups for the Settings "Danger Zone" -
+-- fits the rest of the addon's Blizzard-native look far better than a
+-- custom-built popup, and is the idiomatic way to gate a destructive,
+-- irreversible action in WoW addons.
+StaticPopupDialogs["SAVEWHISPERS_CONFIRM_DELETE_ALL"] = {
+    text = "Delete ALL SaveWhispers history? This removes every DM, the Guild Chat history, every Party/Raid session and every added channel. This cannot be undone.",
+    button1 = "Delete",
+    button2 = "Cancel",
+    OnAccept = function() SW:DeleteAllChats() end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+StaticPopupDialogs["SAVEWHISPERS_CONFIRM_DELETE_DMS"] = {
+    text = "Delete all DM conversations? This cannot be undone.",
+    button1 = "Delete",
+    button2 = "Cancel",
+    OnAccept = function() SW:DeleteAllDMs() end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+StaticPopupDialogs["SAVEWHISPERS_CONFIRM_DELETE_GUILD"] = {
+    text = "Delete Guild Chat history? This cannot be undone.",
+    button1 = "Delete",
+    button2 = "Cancel",
+    OnAccept = function() SW:DeleteGuildHistory() end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+StaticPopupDialogs["SAVEWHISPERS_CONFIRM_DELETE_GROUP"] = {
+    text = "Delete all Party/Raid chat sessions? This cannot be undone.",
+    button1 = "Delete",
+    button2 = "Cancel",
+    OnAccept = function() SW:DeleteAllGroupSessions() end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+
 function SW:BuildSettingsPanel()
     local panel = self:NewPanel("Settings")
     panel.scroll = scroll(panel)
@@ -1396,7 +1612,6 @@ function SW:BuildSettingsPanel()
     panel.scroll:SetPoint("TOPLEFT", 0, 0)
     panel.scroll:SetPoint("BOTTOMRIGHT", -26, 0)
     local content = panel.scroll.content
-    content:SetSize(800, 398)
     panel.content = content
     local heading = text(content, "Settings", "GameFontNormalLarge")
     heading:SetPoint("TOPLEFT", 4, -12)
@@ -1464,6 +1679,47 @@ function SW:BuildSettingsPanel()
     end
     addSlider("UIScale", "uiScale", nil, "Interface scale", -272, 0.75, 1.35, 0.05)
     addSlider("ChatScale", "chatScale", nil, "Chat text scale", -318, 0.80, 1.35, 0.05)
+
+    local styleHeading = text(content, "UI Style", "GameFontNormal")
+    styleHeading:SetPoint("TOPLEFT", 4, -360)
+    local styleHint = text(content, "Changing this applies after a UI reload.", "GameFontDisableSmall")
+    styleHint:SetPoint("TOPLEFT", 4, -382)
+    local function themePill(themeKey, label)
+        local pill = fitButton(button(content, label, 10, 22), 16)
+        pill:SetScript("OnClick", function()
+            SW.DB.settings.uiTheme = themeKey
+            SW:RefreshSettingsPanel()
+        end)
+        return pill
+    end
+    panel.themeClassic = themePill("classic", "WoW Classic")
+    panel.themeClassic:SetPoint("TOPLEFT", 12, -404)
+    panel.themeElvui = themePill("elvui", "ElvUI")
+    panel.themeElvui:SetPoint("LEFT", panel.themeClassic, "RIGHT", 6, 0)
+    panel.themeModern = themePill("modern", "Modern SaveWhispers")
+    panel.themeModern:SetPoint("LEFT", panel.themeElvui, "RIGHT", 6, 0)
+    panel.reloadUI = fitButton(button(content, "Reload UI", 10, 22))
+    panel.reloadUI:SetPoint("LEFT", panel.themeModern, "RIGHT", 16, 0)
+    panel.reloadUI:SetScript("OnClick", function() ReloadUI() end)
+
+    local dangerHeading = text(content, "Danger Zone", "GameFontNormal", 0.9, 0.3, 0.3)
+    dangerHeading:SetPoint("TOPLEFT", 4, -438)
+    local dangerHint = text(content, "These permanently delete saved history - each asks for confirmation first.", "GameFontDisableSmall")
+    dangerHint:SetPoint("TOPLEFT", 4, -460)
+    panel.deleteDMs = fitButton(button(content, "Delete all DMs", 10, 22))
+    panel.deleteDMs:SetPoint("TOPLEFT", 12, -484)
+    panel.deleteDMs:SetScript("OnClick", function() StaticPopup_Show("SAVEWHISPERS_CONFIRM_DELETE_DMS") end)
+    panel.deleteGuild = fitButton(button(content, "Delete Guild Chat", 10, 22))
+    panel.deleteGuild:SetPoint("LEFT", panel.deleteDMs, "RIGHT", 6, 0)
+    panel.deleteGuild:SetScript("OnClick", function() StaticPopup_Show("SAVEWHISPERS_CONFIRM_DELETE_GUILD") end)
+    panel.deleteGroup = fitButton(button(content, "Delete Party/Raid sessions", 10, 22))
+    panel.deleteGroup:SetPoint("LEFT", panel.deleteGuild, "RIGHT", 6, 0)
+    panel.deleteGroup:SetScript("OnClick", function() StaticPopup_Show("SAVEWHISPERS_CONFIRM_DELETE_GROUP") end)
+    panel.deleteAll = fitButton(button(content, "Delete ALL chats", 10, 22))
+    panel.deleteAll:SetPoint("TOPLEFT", 12, -512)
+    panel.deleteAll:SetScript("OnClick", function() StaticPopup_Show("SAVEWHISPERS_CONFIRM_DELETE_ALL") end)
+
+    content:SetSize(800, 560)
 end
 
 function SW:RefreshSettingsPanel()
@@ -1483,6 +1739,13 @@ function SW:RefreshSettingsPanel()
         if value > 1500 then overLimit = true end
     end
     panel.limitWarning:SetText(overLimit and "Values above 1500 can slow down login/reload (larger saved file)." or "")
+    local currentTheme = self.DB.settings.uiTheme or "classic"
+    for _, pill in ipairs({ panel.themeClassic, panel.themeElvui, panel.themeModern }) do
+        pill:UnlockHighlight()
+    end
+    local activeThemePill = ({ classic = panel.themeClassic, elvui = panel.themeElvui, modern = panel.themeModern })[currentTheme]
+    if activeThemePill then activeThemePill:LockHighlight() end
+    panel.reloadUI:SetShown(currentTheme ~= self.ui.appliedTheme)
     panel.loading = false
 end
 
@@ -1505,6 +1768,9 @@ local CHANGELOG = {
             "Fixed: a stray leading space in Party/Raid session subtitles like \"( 14.07.2026 15:52)\".",
             "Fixed: a message box left focused could keep eating keystrokes (e.g. WASD) after closing the window or switching tabs.",
             "Fixed: opening a busy Guild/Party/Raid chat could stutter - only the most recent messages are rendered now, and an existing conversation that was already over its message limit is trimmed back down immediately instead of over hundreds of new messages.",
+            "Conversation list filter pills (All / DMs / Guild / Group) to untangle Guild Chat and Party/Raid sessions from the DM list.",
+            "Settings > Danger Zone: buttons to delete all DMs, Guild Chat history, all Party/Raid sessions, or everything at once - each behind a confirmation popup.",
+            "Settings > UI Style: choose between WoW Classic (default), an ElvUI-inspired flat theme, or a new Modern SaveWhispers theme (applies after a UI reload).",
         },
     },
     {
