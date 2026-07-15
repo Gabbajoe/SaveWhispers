@@ -180,6 +180,11 @@ local function checkButton(parent)
     end
     local control = CreateFrame("CheckButton", nil, parent, BACKDROP)
     control:SetSize(24, 24)
+    -- Same gotcha as plain Buttons: a template-less widget doesn't
+    -- register for any click by default, so OnClick silently never fired -
+    -- clicking any checkbox on the flat themes (e.g. "Show minimap
+    -- button") did nothing at all.
+    control:RegisterForClicks("LeftButtonUp")
     control:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
     control:SetBackdropColor(unpack(theme.buttonColor))
     control:SetBackdropBorderColor(unpack(theme.buttonBorderColor))
@@ -1961,6 +1966,8 @@ local CHANGELOG = {
             "Fixed: the filter pills (All/DMs/Guild/Group) didn't span the full width flush on both sides on the flat UI Styles.",
             "Checkboxes, sliders and the resize grip are now themed on the flat UI Styles too, instead of staying the default Blizzard look.",
             "Icons next to the Settings and Watchlist tab headings (wrench and eye), matching the Changelog tab's book icon.",
+            "Minimap button now has a gold border ring like every other addon's minimap icon, and shows a small unread-count badge.",
+            "Fixed: on the flat UI Styles, every checkbox in Settings silently did nothing when clicked (same missing click-registration issue as the earlier button fix) - most noticeably, there was no way to re-enable a hidden minimap button from Settings.",
         },
     },
     {

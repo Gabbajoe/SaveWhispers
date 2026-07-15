@@ -33,11 +33,20 @@ function SW:CreateMinimapButton()
     button:RegisterForDrag("LeftButton")
     if not button.icon then
         button.icon = button:CreateTexture(nil, "ARTWORK")
-        button.icon:SetPoint("CENTER")
-        button.icon:SetSize(24, 24)
+        button.icon:SetPoint("CENTER", -1, 1)
+        button.icon:SetSize(20, 20)
     end
     button.icon:SetTexture(ICON)
     button.icon:SetTexCoord(0, 1, 0, 1)
+    if not button.border then
+        -- The gold ring every other minimap button has (Blizzard's own
+        -- tracking icons included) - without it this looked like a plain
+        -- floating icon instead of a proper minimap button.
+        button.border = button:CreateTexture(nil, "OVERLAY")
+        button.border:SetSize(54, 54)
+        button.border:SetPoint("TOPLEFT", 0, 0)
+        button.border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+    end
     if not button.highlight then
         button.highlight = button:CreateTexture(nil, "HIGHLIGHT")
         button.highlight:SetPoint("CENTER")
@@ -74,6 +83,7 @@ function SW:CreateMinimapButton()
     self.ui.minimapButton = button
     place(button)
     self:UpdateMinimapButton()
+    self:UpdateMinimapBadge()
 end
 
 function SW:UpdateMinimapButton()
@@ -83,5 +93,30 @@ function SW:UpdateMinimapButton()
 end
 
 function SW:UpdateMinimapBadge()
-    -- Reserved for unread-count support.
+    local button = self.ui and self.ui.minimapButton
+    if not button then return end
+    if not button.badge then
+        button.badge = CreateFrame("Frame", nil, button)
+        button.badge:SetSize(18, 18)
+        button.badge:SetPoint("TOPRIGHT", 2, 2)
+        button.badge.bg = button.badge:CreateTexture(nil, "OVERLAY")
+        button.badge.bg:SetAllPoints()
+        button.badge.bg:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
+        button.badge.bg:SetVertexColor(0.8, 0.1, 0.1, 0.95)
+        button.badge.text = button.badge:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        button.badge.text:SetPoint("CENTER", 0, 0)
+    end
+    local total = 0
+    for _, conversation in pairs(self.DB.conversations or {}) do
+        total = total + (tonumber(conversation.unread) or 0)
+    end
+    for _, conversation in pairs(self.DB.groupChats or {}) do
+        if type(conversation) == "table" then total = total + (tonumber(conversation.unread) or 0) end
+    end
+    if total > 0 then
+        button.badge.text:SetText(total > 99 and "99+" or tostring(total))
+        button.badge:Show()
+    else
+        button.badge:Hide()
+    end
 end
