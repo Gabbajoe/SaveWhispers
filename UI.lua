@@ -170,6 +170,32 @@ local function skinFlatButton(control, theme)
     control:HookScript("OnEnable", function(self) fontString:SetTextColor(unpack(self.SW_enabledColor)) end)
 end
 
+-- CheckButton is a native widget type: SetCheckedTexture/SetHighlightTexture
+-- are built into it regardless of template, so no OnClick/SetChecked
+-- hooking is needed - the widget itself shows/hides the checked texture.
+local function checkButton(parent)
+    local theme = currentTheme()
+    if theme.useNativeWidgets then
+        return CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+    end
+    local control = CreateFrame("CheckButton", nil, parent, BACKDROP)
+    control:SetSize(24, 24)
+    control:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+    control:SetBackdropColor(unpack(theme.buttonColor))
+    control:SetBackdropBorderColor(unpack(theme.buttonBorderColor))
+    local checked = control:CreateTexture(nil, "OVERLAY")
+    checked:SetPoint("TOPLEFT", 3, -3)
+    checked:SetPoint("BOTTOMRIGHT", -3, 3)
+    checked:SetColorTexture(theme.accentColor[1], theme.accentColor[2], theme.accentColor[3], 1)
+    control:SetCheckedTexture(checked)
+    local highlight = control:CreateTexture(nil, "HIGHLIGHT")
+    highlight:SetAllPoints()
+    highlight:SetColorTexture(theme.accentColor[1], theme.accentColor[2], theme.accentColor[3], theme.accentColor[4] or 0.35)
+    highlight:SetBlendMode("ADD")
+    control:SetHighlightTexture(highlight)
+    return control
+end
+
 -- Standard Blizzard button/edit box/inset templates for the "classic" theme;
 -- "elvui"/"modern" build the same widget without a template instead, using
 -- flat WHITE8X8 backdrops colored per-theme (see THEMES/skinFlatButton).
@@ -662,8 +688,18 @@ function SW:CreateUI()
     resize.texture = resize:CreateTexture(nil, "ARTWORK")
     resize.texture:SetAllPoints()
     resize.texture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
-    resize:SetScript("OnEnter", function(self) self.texture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down") end)
-    resize:SetScript("OnLeave", function(self) self.texture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up") end)
+    -- SetTexture resets any vertex tint back to white, so the flat themes'
+    -- recolor has to be re-applied after every texture swap (hover in/out),
+    -- not just once at creation.
+    local resizeTheme = currentTheme()
+    local function tintResizeGrip()
+        if not resizeTheme.useNativeWidgets then
+            resize.texture:SetVertexColor(resizeTheme.buttonBorderColor[1], resizeTheme.buttonBorderColor[2], resizeTheme.buttonBorderColor[3])
+        end
+    end
+    tintResizeGrip()
+    resize:SetScript("OnEnter", function(self) self.texture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down"); tintResizeGrip() end)
+    resize:SetScript("OnLeave", function(self) self.texture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up"); tintResizeGrip() end)
     resize:SetScript("OnMouseDown", function() frame:StartSizing("BOTTOMRIGHT") end)
     resize:SetScript("OnMouseUp", function()
         frame:StopMovingOrSizing()
@@ -828,7 +864,24 @@ function SW:BuildMessagesPanel()
     panel.filterDM = filterPill("dm", "DMs")
     panel.filterGuild = filterPill("guild", "Guild")
     panel.filterGroup = filterPill("group", "Group")
-    flowRight(panel.left, -30, -88, 4, { panel.filterGroup, panel.filterGuild, panel.filterDM, panel.filterAll })
+    -- Spread across the full width (x=12 to -30, matching every other
+    -- flush row in this column) with the leftover space divided evenly
+    -- between the 4 pills, instead of a fixed small gap chained from the
+    -- right - that left the row's total width (and so its left edge)
+    -- wherever the pills' own text happened to add up to.
+    do
+        local pills = { panel.filterAll, panel.filterDM, panel.filterGuild, panel.filterGroup }
+        local totalWidth = 0
+        for _, pill in ipairs(pills) do totalWidth = totalWidth + pill:GetWidth() end
+        local available = 242 - 12 - 30
+        local gap = (available - totalWidth) / (#pills - 1)
+        local x = 12
+        for _, pill in ipairs(pills) do
+            pill:ClearAllPoints()
+            pill:SetPoint("TOPLEFT", panel.left, "TOPLEFT", x, -88)
+            x = x + pill:GetWidth() + gap
+        end
+    end
     panel.list = scroll(panel.left)
     panel.list:SetPoint("TOPLEFT", 12, -114)
     panel.list:SetPoint("BOTTOMRIGHT", -30, 48)
@@ -1596,8 +1649,12 @@ end
 
 function SW:BuildWatchlistPanel()
     local panel = self:NewPanel("Watchlist")
+    local icon = panel:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(24, 24)
+    icon:SetPoint("TOPLEFT", 2, -10)
+    icon:SetTexture("Interface\\Icons\\INV_Misc_Eye_01")
     local heading = text(panel, "Watchlist", "GameFontNormalLarge")
-    heading:SetPoint("TOPLEFT", 4, -12)
+    heading:SetPoint("LEFT", icon, "RIGHT", 6, 1)
     local hint = text(panel, "Mark important players. Starred conversations are never removed automatically.", "GameFontDisableSmall")
     hint:SetPoint("TOPLEFT", 4, -39)
     panel.addName = edit(panel, 250, 22, "Enter player name", function(value) return SW:GetNameSuggestions(value) end)
@@ -1721,19 +1778,23 @@ function SW:BuildSettingsPanel()
     panel.scroll:SetPoint("BOTTOMRIGHT", -26, 0)
     local content = panel.scroll.content
     panel.content = content
+    local icon = content:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(24, 24)
+    icon:SetPoint("TOPLEFT", 2, -10)
+    icon:SetTexture("Interface\\Icons\\INV_Misc_Wrench_01")
     local heading = text(content, "Settings", "GameFontNormalLarge")
-    heading:SetPoint("TOPLEFT", 4, -12)
-    panel.enabled = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
+    heading:SetPoint("LEFT", icon, "RIGHT", 6, 1)
+    panel.enabled = checkButton(content)
     panel.enabled:SetPoint("TOPLEFT", 2, -50)
     panel.enabled.label = text(content, "Enable SaveWhispers", "GameFontHighlightSmall")
     panel.enabled.label:SetPoint("LEFT", panel.enabled, "RIGHT", 2, 0)
     panel.enabled:SetScript("OnClick", function(self) SW:SetSetting("enabled", self:GetChecked() and true or false) end)
-    panel.minimap = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
+    panel.minimap = checkButton(content)
     panel.minimap:SetPoint("TOPLEFT", 2, -78)
     panel.minimap.label = text(content, "Show minimap button", "GameFontHighlightSmall")
     panel.minimap.label:SetPoint("LEFT", panel.minimap, "RIGHT", 2, 0)
     panel.minimap:SetScript("OnClick", function(self) SW:SetSetting("showMinimap", self:GetChecked() and true or false) end)
-    panel.sortByActivity = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
+    panel.sortByActivity = checkButton(content)
     panel.sortByActivity:SetPoint("TOPLEFT", 2, -106)
     panel.sortByActivity.label = text(content, "Sort chats by recent activity (unchecked: alphabetical)", "GameFontHighlightSmall")
     panel.sortByActivity.label:SetPoint("LEFT", panel.sortByActivity, "RIGHT", 2, 0)
@@ -1776,6 +1837,14 @@ function SW:BuildSettingsPanel()
         slider:SetWidth(250); slider:SetHeight(18)
         slider:SetMinMaxValues(minimum or 0, maximum or 1); slider:SetValueStep(step or 0.05)
         if slider.SetObeyStepOnDrag then slider:SetObeyStepOnDrag(true) end
+        local theme = currentTheme()
+        if not theme.useNativeWidgets then
+            local thumb = slider:GetThumbTexture()
+            if thumb then
+                thumb:SetColorTexture(theme.accentColor[1], theme.accentColor[2], theme.accentColor[3], 1)
+                thumb:SetSize(14, 18)
+            end
+        end
         slider.label = text(content, label, "GameFontHighlightSmall")
         slider.label:SetPoint("BOTTOMLEFT", slider, "TOPLEFT", -7, 3)
         slider:SetScript("OnValueChanged", function(self, value)
@@ -1889,6 +1958,9 @@ local CHANGELOG = {
             "Fixed: overlapping text in Settings under \"Limits\" (a heading/hint insertion had shifted everything below it down, but not the fields themselves).",
             "Fixed: \"+ Add channel\" floated with whatever width \"Select\"/\"Done\" happened to be, instead of staying flush with the Player/Channel field and list below it.",
             "Fixed: the Members popup could list yourself twice (once bare, once as \"Name-Realm\") - now deduped by base name, shown as \"Name (Realm)\" like everywhere else.",
+            "Fixed: the filter pills (All/DMs/Guild/Group) didn't span the full width flush on both sides on the flat UI Styles.",
+            "Checkboxes, sliders and the resize grip are now themed on the flat UI Styles too, instead of staying the default Blizzard look.",
+            "Icons next to the Settings and Watchlist tab headings (wrench and eye), matching the Changelog tab's book icon.",
         },
     },
     {

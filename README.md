@@ -62,6 +62,9 @@ Open it with `/sw` or the movable minimap button.
 - Fixed: overlapping text in Settings under "Limits" (a heading/hint insertion had shifted everything below it down, but not the fields themselves).
 - Fixed: "+ Add channel" floated with whatever width "Select"/"Done" happened to be, instead of staying flush with the Player/Channel field and list below it.
 - Fixed: the Members popup could list yourself twice (once bare, once as "Name-Realm") - now deduped by base name, shown as "Name (Realm)" like everywhere else.
+- Fixed: the filter pills (All/DMs/Guild/Group) didn't span the full width flush on both sides on the flat UI Styles.
+- Checkboxes, sliders and the resize grip are now themed on the flat UI Styles too, instead of staying the default Blizzard look.
+- Icons next to the Settings and Watchlist tab headings (wrench and eye), matching the Changelog tab's book icon.
 
 ### V1.0 (Author: Femboybaddie)
 
