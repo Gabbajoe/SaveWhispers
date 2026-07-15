@@ -23,9 +23,15 @@ end
 
 function SW:CreateMinimapButton()
     if not Minimap then return end
+    -- Standard LibDBIcon-style layout (31x31 button, 20x20 icon inset at a
+    -- fixed TOPLEFT offset, 54x54 ring anchored at the button's own
+    -- TOPLEFT) - the exact sizes/offsets countless other minimap addon
+    -- buttons already use, since MiniMap-TrackingBorder's circular cutout
+    -- isn't centered in its own texture bounds; a plain CENTER anchor on
+    -- the icon left it visibly off-center inside the ring.
     local button = _G.SaveWhispersMinimapButton or CreateFrame("Button", "SaveWhispersMinimapButton", Minimap)
     button:SetParent(Minimap)
-    button:SetSize(26, 26)
+    button:SetSize(31, 31)
     button:SetFrameStrata("MEDIUM")
     button:SetFrameLevel((Minimap:GetFrameLevel() or 1) + 8)
     button:EnableMouse(true)
@@ -33,8 +39,8 @@ function SW:CreateMinimapButton()
     button:RegisterForDrag("LeftButton")
     if not button.icon then
         button.icon = button:CreateTexture(nil, "ARTWORK")
-        button.icon:SetPoint("CENTER", -1, 1)
         button.icon:SetSize(20, 20)
+        button.icon:SetPoint("TOPLEFT", 7, -6)
     end
     button.icon:SetTexture(ICON)
     button.icon:SetTexCoord(0, 1, 0, 1)
@@ -48,10 +54,13 @@ function SW:CreateMinimapButton()
         button.border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
     end
     if not button.highlight then
+        -- UI-Minimap-ZoomButton-Highlight is a cross/starburst shape meant
+        -- for the +/- zoom buttons, not a plain icon - looked out of place
+        -- here. A plain square glow reads as a normal button highlight.
         button.highlight = button:CreateTexture(nil, "HIGHLIGHT")
-        button.highlight:SetPoint("CENTER")
-        button.highlight:SetSize(28, 28)
-        button.highlight:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+        button.highlight:SetPoint("TOPLEFT", button.icon, "TOPLEFT")
+        button.highlight:SetPoint("BOTTOMRIGHT", button.icon, "BOTTOMRIGHT")
+        button.highlight:SetTexture("Interface\\Buttons\\ButtonHilight-Square")
         button.highlight:SetBlendMode("ADD")
     end
     button:SetScript("OnClick", function(self, clicked)

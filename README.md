@@ -66,6 +66,7 @@ Open it with `/sw` or the movable minimap button.
 - Checkboxes, sliders and the resize grip are now themed on the flat UI Styles too, instead of staying the default Blizzard look.
 - Icons next to the Settings and Watchlist tab headings (wrench and eye), matching the Changelog tab's book icon.
 - Minimap button now has a gold border ring like every other addon's minimap icon, and shows a small unread-count badge.
+- Fixed: the minimap icon was off-center inside its new border ring, and its mouseover highlight used a cross/starburst texture meant for zoom buttons.
 - Fixed: on the flat UI Styles, every checkbox in Settings silently did nothing when clicked (same missing click-registration issue as the earlier button fix) - most noticeably, there was no way to re-enable a hidden minimap button from Settings.
 
 ### V1.0 (Author: Femboybaddie)
