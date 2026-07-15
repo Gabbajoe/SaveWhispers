@@ -106,14 +106,17 @@ function SW:UpdateMinimapBadge()
     if not button then return end
     if not button.badge then
         button.badge = CreateFrame("Frame", nil, button)
-        button.badge:SetSize(18, 18)
-        button.badge:SetPoint("TOPRIGHT", 2, 2)
+        button.badge:SetSize(16, 16)
+        -- Bottom-left (roughly 8 o'clock), like most addons' minimap
+        -- count badges - was top-right, and a flat-color square instead of
+        -- a proper round badge.
+        button.badge:SetPoint("BOTTOMLEFT", -2, -2)
         button.badge.bg = button.badge:CreateTexture(nil, "OVERLAY")
         button.badge.bg:SetAllPoints()
-        button.badge.bg:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
-        button.badge.bg:SetVertexColor(0.8, 0.1, 0.1, 0.95)
+        button.badge.bg:SetTexture("Interface\\COMMON\\Indicator-Red")
         button.badge.text = button.badge:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         button.badge.text:SetPoint("CENTER", 0, 0)
+        if button.badge.text.SetTextHeight then button.badge.text:SetTextHeight(10) end
     end
     local total = 0
     for _, conversation in pairs(self.DB.conversations or {}) do
