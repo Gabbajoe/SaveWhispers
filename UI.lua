@@ -117,7 +117,7 @@ local function closeButton(parent, name)
     control:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
     control:SetBackdropColor(unpack(theme.buttonColor))
     control:SetBackdropBorderColor(unpack(theme.buttonBorderColor))
-    control:RegisterForClicks("LeftButtonUp", "LeftButtonDown")
+    control:RegisterForClicks("LeftButtonUp")
     local label = control:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     label:SetPoint("CENTER", 0, 0)
     label:SetText("x")
@@ -145,8 +145,17 @@ local function skinFlatButton(control, theme)
     control:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
     control:SetBackdropColor(unpack(theme.buttonColor))
     control:SetBackdropBorderColor(unpack(theme.buttonBorderColor))
-    control:RegisterForClicks("LeftButtonUp", "LeftButtonDown")
-    local fontString = control:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    -- Registering both up and down would fire the click handler twice per
+    -- physical click - harmless for idempotent handlers, but a toggle
+    -- (e.g. "Select") would flip twice and visibly snap right back.
+    control:RegisterForClicks("LeftButtonUp")
+    -- Same font object UIPanelButtonTemplate itself uses for its label
+    -- (GameFontNormal, not GameFontHighlightSmall) - using a different,
+    -- narrower font here made fitButton() measure these buttons narrower
+    -- than their classic-theme counterparts, throwing off every
+    -- right-anchored row (flowRight) that mixes them with fixed-width
+    -- elements like the "Player/Channel" field above.
+    local fontString = control:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     fontString:SetPoint("CENTER")
     fontString:SetTextColor(unpack(theme.textColor))
     control:SetFontString(fontString)
@@ -762,10 +771,10 @@ function SW:BuildMessagesPanel()
     panel.left:SetWidth(242)
     -- One compact heading line ("Conversations  73/200") instead of two,
     -- freeing a whole row so "+ Add channel" can share a row with
-    -- "Select DMs" rather than sitting on its own line below.
+    -- "Select" rather than sitting on its own line below.
     panel.counter = text(panel.left, "Conversations", "GameFontDisableSmall")
     panel.counter:SetPoint("TOPLEFT", 14, -12)
-    panel.select = fitButton(button(panel.left, "Select DMs", 10, 22))
+    panel.select = fitButton(button(panel.left, "Select", 10, 22))
     -- -30, not -12: flush with the list's right edge below, which is inset
     -- further to leave room for its scrollbar.
     panel.select:SetPoint("TOPRIGHT", -30, -34)
@@ -774,15 +783,19 @@ function SW:BuildMessagesPanel()
         SW.ui.selectedDMs = {}
         SW:RefreshUI()
     end)
+    -- Anchored to the fixed left edge (matching the Player/Channel field
+    -- and list below), not chained off "Select"'s left side - otherwise
+    -- the whole row's left extent drifted with "Select"/"Done"'s width,
+    -- landing it out of line with everything else in the column.
     panel.addChannel = fitButton(button(panel.left, "+ Add channel", 10, 22))
-    panel.addChannel:SetPoint("RIGHT", panel.select, "LEFT", -6, 0)
-    -- "Open" is pinned to the same -30 right edge as "Select DMs"/the list
+    panel.addChannel:SetPoint("TOPLEFT", 12, -34)
+    -- "Open" is pinned to the same -30 right edge as "Select"/the list
     -- below, instead of floating off the input field's width - otherwise
     -- its edge drifts depending on how wide the button's own label renders,
     -- landing it out of line with everything else in the column.
     panel.add = fitButton(button(panel.left, "Open", 10, 22))
     panel.add:SetPoint("TOPRIGHT", -30, -62)
-    panel.target = edit(panel.left, 140, 22, "Player / channel", function(value) return SW:GetNameSuggestions(value) end)
+    panel.target = edit(panel.left, 140, 22, "Player/Channel", function(value) return SW:GetNameSuggestions(value) end)
     panel.target:SetPoint("TOPLEFT", 12, -62)
     panel.target:SetPoint("RIGHT", panel.add, "LEFT", -6, 0)
     panel.add:SetScript("OnClick", function()
@@ -822,12 +835,17 @@ function SW:BuildMessagesPanel()
     panel.deleteSelected = button(panel.left, "Delete selected", 122, 22)
     panel.deleteSelected:SetPoint("BOTTOMLEFT", 12, 12)
     panel.deleteSelected:SetScript("OnClick", function()
-        local removed = 0
-        for key in pairs(SW.ui.selectedDMs or {}) do
-            if SW:GetConversation(key) then SW.DB.conversations[key] = nil; removed = removed + 1 end
-        end
-        if removed == 0 then SW:Print("Select at least one DM first."); return end
-        SW.ui.selectedDMs = {}; SW.ui.selectMode = false; SW.ui.selectedKey = nil
+        -- Select mode lets you check off any conversation, not just DMs -
+        -- deleting used to only ever touch DB.conversations directly, so a
+        -- checked Guild/Party/Raid/channel entry silently stayed put while
+        -- still counting as "removed". SW:DeleteConversation already knows
+        -- how to handle every conversation type correctly (and that Guild
+        -- Chat itself can't be removed), so reuse it instead.
+        local keys = {}
+        for key in pairs(SW.ui.selectedDMs or {}) do keys[#keys + 1] = key end
+        if #keys == 0 then SW:Print("Select at least one chat first."); return end
+        for _, key in ipairs(keys) do SW:DeleteConversation(key) end
+        SW.ui.selectedDMs = {}; SW.ui.selectMode = false
         SW:NotifyDataChanged()
     end)
     panel.cancelSelected = button(panel.left, "Cancel", 64, 22)
@@ -969,8 +987,8 @@ function SW:RefreshMessagesPanel()
     local maximum = math.max(1, math.floor(tonumber(self.DB.settings.maxConversations) or 200))
     local dmCount = 0
     for _ in pairs(self.DB.conversations or {}) do dmCount = dmCount + 1 end
-    panel.counter:SetText((self.ui.selectMode and "Select DMs" or "Conversations") .. "  " .. dmCount .. "/" .. maximum)
-    panel.select:SetText(self.ui.selectMode and "Done" or "Select DMs")
+    panel.counter:SetText((self.ui.selectMode and "Select chats" or "Conversations") .. "  " .. dmCount .. "/" .. maximum)
+    panel.select:SetText(self.ui.selectMode and "Done" or "Select")
     fitButton(panel.select)
     panel.addChannel:SetPoint("RIGHT", panel.select, "LEFT", -6, 0)
     if self.ui.selectMode then panel.deleteSelected:Show(); panel.cancelSelected:Show() else panel.deleteSelected:Hide(); panel.cancelSelected:Hide() end
@@ -1486,13 +1504,31 @@ local function createMemberRow(parent)
     return row
 end
 
+-- Dedupe by base name, not the full "Name-Realm" string - the player's own
+-- unit (UnitName("player")) never carries a realm suffix, while the same
+-- person showing up as a chat message sender usually does, so keying on
+-- the full name listed the same person twice. Realm shows as "(Realm)"
+-- like everywhere else in the UI, not the raw "-Realm" suffix.
 local function addMember(members, names, name, state)
     name = SW:NormalizePlayerName(name)
     if not name then return end
-    local key = string.lower(name)
-    if not members[key] then
-        members[key] = { name = name, state = state or "Offline" }
-        names[#names + 1] = members[key]
+    local base, realm = splitRealm(name)
+    local key = string.lower(base)
+    local entry = members[key]
+    if not entry then
+        entry = {
+            name = realm and (base .. " (" .. realm .. ")") or base,
+            sortName = base,
+            hasRealm = realm ~= nil,
+            state = state or "Offline",
+        }
+        members[key] = entry
+        names[#names + 1] = entry
+    elseif realm and not entry.hasRealm then
+        -- Upgrade a bare name seen first to the realm-qualified display
+        -- once a mention with the realm turns up, instead of duplicating.
+        entry.name = base .. " (" .. realm .. ")"
+        entry.hasRealm = true
     end
 end
 
@@ -1523,7 +1559,7 @@ function SW:ShowMembers(conversation)
         end
     end
     for _, message in ipairs(conversation.messages or {}) do addMember(members, names, message.sender, nil) end
-    table.sort(names, function(a, b) return string.lower(a.name) < string.lower(b.name) end)
+    table.sort(names, function(a, b) return string.lower(a.sortName) < string.lower(b.sortName) end)
     -- Session conversations are named e.g. "Party Chat - 14.07.2026 15:52";
     -- appending " Members (11)" to the full thing overflowed this narrow
     -- window. Drop the " - <date>" part, the title bar doesn't need it.
@@ -1727,11 +1763,11 @@ function SW:BuildSettingsPanel()
         panel.limitFields[#panel.limitFields + 1] = { field = field, setting = setting, minimum = minimum, default = default }
     end
     panel.limitFields = {}
-    addLimitField("DMLimit", "maxConversations", "DM conversations to keep", -160, 10, 200)
-    addLimitField("GroupLimit", "maxGroupMessages", "Messages to keep per Guild/Party/channel", -186, 50, 1500)
-    addLimitField("SessionLimit", "maxGroupSessions", "Party/Raid chat sessions to keep", -212, 10, 200)
+    addLimitField("DMLimit", "maxConversations", "DM conversations to keep", -188, 10, 200)
+    addLimitField("GroupLimit", "maxGroupMessages", "Messages to keep per Guild/Party/channel", -214, 50, 1500)
+    addLimitField("SessionLimit", "maxGroupSessions", "Party/Raid chat sessions to keep", -240, 10, 200)
     panel.limitWarning = text(content, "", "GameFontDisableSmall", 0.95, 0.75, 0.18)
-    panel.limitWarning:SetPoint("TOPLEFT", 12, -236)
+    panel.limitWarning:SetPoint("TOPLEFT", 12, -264)
 
     panel.sliders = {}
     local function addSlider(id, setting, channel, label, offset, minimum, maximum, step)
@@ -1749,13 +1785,13 @@ function SW:BuildSettingsPanel()
         end)
         panel.sliders[#panel.sliders + 1] = { slider = slider, setting = setting, channel = channel }
     end
-    addSlider("UIScale", "uiScale", nil, "Interface scale", -272, 0.75, 1.35, 0.05)
-    addSlider("ChatScale", "chatScale", nil, "Chat text scale", -318, 0.80, 1.35, 0.05)
+    addSlider("UIScale", "uiScale", nil, "Interface scale", -300, 0.75, 1.35, 0.05)
+    addSlider("ChatScale", "chatScale", nil, "Chat text scale", -346, 0.80, 1.35, 0.05)
 
     local styleHeading = text(content, "UI Style", "GameFontNormal")
-    styleHeading:SetPoint("TOPLEFT", 4, -360)
+    styleHeading:SetPoint("TOPLEFT", 4, -388)
     local styleHint = text(content, "Changing this applies after a UI reload.", "GameFontDisableSmall")
-    styleHint:SetPoint("TOPLEFT", 4, -382)
+    styleHint:SetPoint("TOPLEFT", 4, -410)
     local function themePill(themeKey, label)
         local pill = fitButton(button(content, label, 10, 22), 16)
         pill:SetScript("OnClick", function()
@@ -1765,7 +1801,7 @@ function SW:BuildSettingsPanel()
         return pill
     end
     panel.themeClassic = themePill("classic", "WoW Classic")
-    panel.themeClassic:SetPoint("TOPLEFT", 12, -404)
+    panel.themeClassic:SetPoint("TOPLEFT", 12, -432)
     panel.themeElvui = themePill("elvui", "ElvUI")
     panel.themeElvui:SetPoint("LEFT", panel.themeClassic, "RIGHT", 6, 0)
     panel.themeModern = themePill("modern", "Modern SaveWhispers")
@@ -1777,11 +1813,11 @@ function SW:BuildSettingsPanel()
     panel.reloadUI:SetScript("OnClick", function() ReloadUI() end)
 
     local dangerHeading = text(content, "Danger Zone", "GameFontNormal", 0.9, 0.3, 0.3)
-    dangerHeading:SetPoint("TOPLEFT", 4, -438)
+    dangerHeading:SetPoint("TOPLEFT", 4, -466)
     local dangerHint = text(content, "These permanently delete saved history - each asks for confirmation first.", "GameFontDisableSmall")
-    dangerHint:SetPoint("TOPLEFT", 4, -460)
+    dangerHint:SetPoint("TOPLEFT", 4, -488)
     panel.deleteDMs = fitButton(button(content, "Delete all DMs", 10, 22))
-    panel.deleteDMs:SetPoint("TOPLEFT", 12, -484)
+    panel.deleteDMs:SetPoint("TOPLEFT", 12, -512)
     panel.deleteDMs:SetScript("OnClick", function() StaticPopup_Show("SAVEWHISPERS_CONFIRM_DELETE_DMS") end)
     panel.deleteGuild = fitButton(button(content, "Delete Guild Chat", 10, 22))
     panel.deleteGuild:SetPoint("LEFT", panel.deleteDMs, "RIGHT", 6, 0)
@@ -1790,10 +1826,10 @@ function SW:BuildSettingsPanel()
     panel.deleteGroup:SetPoint("LEFT", panel.deleteGuild, "RIGHT", 6, 0)
     panel.deleteGroup:SetScript("OnClick", function() StaticPopup_Show("SAVEWHISPERS_CONFIRM_DELETE_GROUP") end)
     panel.deleteAll = fitButton(button(content, "Delete ALL chats", 10, 22))
-    panel.deleteAll:SetPoint("TOPLEFT", 12, -512)
+    panel.deleteAll:SetPoint("TOPLEFT", 12, -540)
     panel.deleteAll:SetScript("OnClick", function() StaticPopup_Show("SAVEWHISPERS_CONFIRM_DELETE_ALL") end)
 
-    content:SetSize(800, 560)
+    content:SetSize(800, 588)
 end
 
 function SW:RefreshSettingsPanel()
@@ -1847,6 +1883,12 @@ local CHANGELOG = {
             "Settings > UI Style: choose between WoW Classic (default), an ElvUI-inspired flat theme, a Modern SaveWhispers theme, or a Dragonflight-inspired theme (applies after a UI reload).",
             "The close button and scrollbars are now themed too on the flat UI Styles, instead of staying the default Blizzard look.",
             "A book icon next to the Changelog tab's heading.",
+            "Renamed \"Select DMs\" to \"Select\", since it now correctly deletes whatever conversation type you check off (Guild/Party/Raid/channel included, not just DMs).",
+            "Fixed: on the flat UI Styles, buttons could double-fire per click (a toggle like \"Select\" would flip back to itself instantly) and rows built from them (e.g. the filter pills) didn't line up with fixed-width elements like the Player/Channel field.",
+            "Fixed: Select mode's \"Delete selected\" silently skipped any checked Guild/Party/Raid/channel conversation instead of deleting it.",
+            "Fixed: overlapping text in Settings under \"Limits\" (a heading/hint insertion had shifted everything below it down, but not the fields themselves).",
+            "Fixed: \"+ Add channel\" floated with whatever width \"Select\"/\"Done\" happened to be, instead of staying flush with the Player/Channel field and list below it.",
+            "Fixed: the Members popup could list yourself twice (once bare, once as \"Name-Realm\") - now deduped by base name, shown as \"Name (Realm)\" like everywhere else.",
         },
     },
     {

@@ -56,6 +56,12 @@ Open it with `/sw` or the movable minimap button.
 - Settings > UI Style: choose between WoW Classic (default), an ElvUI-inspired flat theme, a Modern SaveWhispers theme, or a Dragonflight-inspired theme (applies after a UI reload).
 - The close button and scrollbars are now themed too on the flat UI Styles, instead of staying the default Blizzard look.
 - A book icon next to the Changelog tab's heading.
+- Renamed "Select DMs" to "Select", since it now correctly deletes whatever conversation type you check off (Guild/Party/Raid/channel included, not just DMs).
+- Fixed: on the flat UI Styles, buttons could double-fire per click (a toggle like "Select" would flip back to itself instantly) and rows built from them (e.g. the filter pills) didn't line up with fixed-width elements like the Player/Channel field.
+- Fixed: Select mode's "Delete selected" silently skipped any checked Guild/Party/Raid/channel conversation instead of deleting it.
+- Fixed: overlapping text in Settings under "Limits" (a heading/hint insertion had shifted everything below it down, but not the fields themselves).
+- Fixed: "+ Add channel" floated with whatever width "Select"/"Done" happened to be, instead of staying flush with the Player/Channel field and list below it.
+- Fixed: the Members popup could list yourself twice (once bare, once as "Name-Realm") - now deduped by base name, shown as "Name (Realm)" like everywhere else.
 
 ### V1.0 (Author: Femboybaddie)
 
