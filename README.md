@@ -48,7 +48,7 @@ Open it with `/sw` or the movable minimap button.
 - Fixed: a stray leading space in Party/Raid session subtitles like "( 14.07.2026 15:52)".
 - Fixed: a message box left focused could keep eating keystrokes (e.g. WASD) after closing the window or switching tabs.
 
-### V1.0
+### V1.0 (Author: Femboybaddie)
 
 - Persistent private, Guild, Party and selected channel histories.
 - Chat colors, pins, member windows and a movable minimap button.

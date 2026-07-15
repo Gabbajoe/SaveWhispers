@@ -1473,7 +1473,7 @@ end
 local CHANGELOG = {
     {
         version = "V1.1",
-        coAuthor = "Gabbajoe",
+        credit = "Co-Author: Gabbajoe",
         entries = {
             "Native Blizzard window look (parchment/gold), pixel-perfect resizing and dragging.",
             "Raid Chat support, and Party/Raid history split into per-session conversations with a captured member list; switching between party and raid mid-session relabels it in place with a note instead of splitting the log.",
@@ -1492,6 +1492,7 @@ local CHANGELOG = {
     },
     {
         version = "V1.0",
+        credit = "Author: Femboybaddie",
         entries = {
             "Persistent private, Guild, Party and selected channel histories.",
             "Chat colors, pins, member windows and a movable minimap button.",
@@ -1526,7 +1527,7 @@ function SW:RefreshChangelogPanel()
     local width = math.max(300, panel.list:GetWidth() - 8)
     local y = 0
     for _, entry in ipairs(CHANGELOG) do
-        local versionLabel = entry.version .. (entry.coAuthor and (" (Co-Author: " .. entry.coAuthor .. ")") or "")
+        local versionLabel = entry.version .. (entry.credit and (" (" .. entry.credit .. ")") or "")
         local header = poolRow(content, changelogRow)
         header:SetFontObject("GameFontNormal")
         header:SetTextColor(1, 0.82, 0)
