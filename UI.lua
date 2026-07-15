@@ -1,0 +1,1571 @@
+local SW = _G.SaveWhispers
+local BACKDROP = SW.BackdropTemplate
+local ICON = "Interface\\AddOns\\SaveWhispers\\assets\\savewhispers_icon"
+
+-- The classic parchment/gold "dialog box" look used by StaticPopup and most
+-- native Blizzard windows. Using the real art (instead of a hand-rolled
+-- flat-color backdrop) is what makes the addon look like part of the game.
+local DIALOG_BACKDROP = {
+    bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+    tile = true, tileSize = 32, edgeSize = 32,
+    insets = { left = 11, right = 12, top = 12, bottom = 11 },
+}
+
+local function text(parent, value, fontObject, r, g, b)
+    local label = parent:CreateFontString(nil, "OVERLAY", fontObject or "GameFontHighlightSmall")
+    label:SetJustifyH("LEFT")
+    label:SetText(value or "")
+    if r then label:SetTextColor(r, g or r, b or r) end
+    return label
+end
+
+-- Standard Blizzard button/edit box/inset templates: they already match the
+-- rest of the game's UI, so there is no per-widget theme color to apply.
+local function button(parent, label, width, height)
+    local control = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    control:SetSize(width, height)
+    control:SetText(label or "")
+    return control
+end
+
+-- Shrinks a button to fit its own label instead of an arbitrary fixed width,
+-- so it doesn't sit inside a wide box with empty padding on both sides.
+local function fitButton(control, extra)
+    local fontString = control:GetFontString()
+    control:SetWidth((fontString and fontString:GetStringWidth() or 40) + (extra or 24))
+    return control
+end
+
+-- A square button showing just an icon (pin/star), with the active state
+-- shown via the button's own highlight lock instead of swapping text labels.
+local function iconButton(parent, texture, tooltipText)
+    local control = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    control:SetSize(28, 24)
+    control.icon = control:CreateTexture(nil, "ARTWORK")
+    control.icon:SetSize(14, 14)
+    control.icon:SetPoint("CENTER", 0, 1)
+    control.icon:SetTexture(texture)
+    control:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText(tooltipText)
+        GameTooltip:Show()
+    end)
+    control:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    return control
+end
+
+-- Optional getSuggestions(text) -> {name, ...} attaches a filtered dropdown
+-- (click to pick) plus Tab-complete (accepts the top match), like the
+-- default chat edit box's player-name completion.
+local function edit(parent, width, height, hint, getSuggestions)
+    local field = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+    field:SetSize(width, height)
+    field:SetFontObject("ChatFontNormal")
+    field:SetAutoFocus(false)
+    field.hint = hint
+    field:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    field:SetScript("OnEditFocusGained", function(self) if self:GetText() == self.hint then self:SetText("") end end)
+    field:SetScript("OnEditFocusLost", function(self)
+        if SW:Trim(self:GetText()) == "" then self:SetText(self.hint or "") end
+        if self.dropdown then
+            local dropdown = self.dropdown
+            C_Timer.After(0.15, function() dropdown:Hide() end)
+        end
+    end)
+    field:SetText(hint or "")
+
+    if getSuggestions then
+        -- A plain flat box, not the big window's decorative parchment
+        -- border: that border art is sized for a ~600px window and looks
+        -- broken (text spilling past it) squeezed into a small dropdown.
+        local dropdownWidth = math.max(width, 190)
+        local dropdown = CreateFrame("Frame", nil, field, BACKDROP)
+        dropdown:SetPoint("TOPLEFT", field, "BOTTOMLEFT", 0, -2)
+        dropdown:SetWidth(dropdownWidth)
+        dropdown:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+        dropdown:SetBackdropColor(0, 0, 0, 0.95)
+        dropdown:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+        dropdown:SetFrameStrata("TOOLTIP")
+        dropdown:Hide()
+        dropdown.rows = {}
+        field.dropdown = dropdown
+        field.suggestions = {}
+        local ROW_H = 18
+
+        local function pick(name)
+            field:SetText(name)
+            field:SetCursorPosition(#name)
+            dropdown:Hide()
+        end
+
+        local function refresh()
+            local value = field:GetText()
+            local suggestions = (value ~= "" and value ~= field.hint) and getSuggestions(value) or {}
+            field.suggestions = suggestions
+            for _, row in ipairs(dropdown.rows) do row:Hide() end
+            if #suggestions == 0 then dropdown:Hide(); return end
+            for i, name in ipairs(suggestions) do
+                local row = dropdown.rows[i]
+                if not row then
+                    row = CreateFrame("Button", nil, dropdown)
+                    row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+                    row.label = text(row, "", "GameFontHighlightSmall")
+                    row.label:SetPoint("LEFT", 6, 0)
+                    row.label:SetWidth(dropdownWidth - 12)
+                    if row.label.SetWordWrap then row.label:SetWordWrap(false) end
+                    dropdown.rows[i] = row
+                end
+                row:ClearAllPoints()
+                row:SetPoint("TOPLEFT", 0, -(i - 1) * ROW_H)
+                row:SetPoint("TOPRIGHT", 0, -(i - 1) * ROW_H)
+                row:SetHeight(ROW_H)
+                row.label:SetText(name)
+                row:SetScript("OnClick", function() pick(name) end)
+                row:Show()
+            end
+            dropdown:SetHeight(#suggestions * ROW_H + 4)
+            dropdown:Show()
+        end
+
+        field:SetScript("OnTextChanged", function(self, userInput) if userInput then refresh() end end)
+        field:SetScript("OnTabPressed", function(self)
+            if self.suggestions[1] then pick(self.suggestions[1]) end
+        end)
+    end
+
+    return field
+end
+
+local INSET_BACKDROP = {
+    bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+    edgeSize = 12,
+    insets = { left = 3, right = 3, top = 3, bottom = 3 },
+}
+
+-- InsetFrameTemplate gives the authentic recessed content-box look used
+-- inside most Blizzard windows. Fall back to a manual backdrop if that
+-- template name isn't present on this client, so a naming mismatch can
+-- never break the whole window from loading.
+local function numberField(parent, width, height)
+    local field = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+    field:SetSize(width, height)
+    field:SetFontObject("ChatFontNormal")
+    field:SetAutoFocus(false)
+    field:SetNumeric(true)
+    field:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    return field
+end
+
+local function inset(parent)
+    local ok, frame = pcall(CreateFrame, "Frame", nil, parent, "InsetFrameTemplate")
+    if not ok or not frame then
+        frame = CreateFrame("Frame", nil, parent, BACKDROP)
+        frame:SetBackdrop(INSET_BACKDROP)
+        frame:SetBackdropColor(0, 0, 0, 0.4)
+        frame:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
+    end
+    return frame
+end
+
+local function fieldValue(field)
+    local value = field:GetText()
+    return value == field.hint and "" or value
+end
+
+-- Player names arrive as "Name-Realm". Showing that inline reads badly, so
+-- callers split it and render the realm as a small subtitle instead.
+local function splitRealm(name)
+    name = name or ""
+    -- Player names have no spaces around the "-" ("Name-Realm"), but a
+    -- session name does ("Party Chat - 14.07.2026 15:52") - trimming
+    -- whitespace on both sides of the split avoids a stray leading space
+    -- ending up inside the "(...)" subtitle for those.
+    local base, realm = string.match(name, "^(.-)%s*%-%s*(.+)$")
+    if base and base ~= "" then return base, realm end
+    return name, nil
+end
+
+-- Fallback name color for when the sender's class isn't resolvable yet
+-- (e.g. the very first message from a brand new player).
+local function chatColor(outgoing)
+    if outgoing then return 1, 1, 1 end
+    return 1, 0.30, 0.62
+end
+
+-- Resolves a message's sender to their class color (e.g. from the GUID
+-- captured off the chat event), falling back to nil - the caller then keeps
+-- the plain chat color - when the class can't be determined (very first
+-- sighting of a player the client hasn't cached info for yet).
+local function classColorHex(guid)
+    if not guid or not GetPlayerInfoByGUID then return nil end
+    local _, englishClass = GetPlayerInfoByGUID(guid)
+    local color = englishClass and RAID_CLASS_COLORS and RAID_CLASS_COLORS[englishClass]
+    if not color then return nil end
+    return string.format("%02x%02x%02x", color.r * 255, color.g * 255, color.b * 255)
+end
+
+-- The raw chat text really does just contain the literal "{rt1}"/"{star}"
+-- etc - the real ChatFrame widget substitutes the raid-icon texture for
+-- display only, it isn't part of the transmitted message. Replicate that
+-- here since our lines aren't real ChatFrame message lines.
+local RAID_ICON_NAMES = { "star", "circle", "diamond", "triangle", "moon", "square", "cross", "skull" }
+local RAID_ICON_INDEX_BY_NAME = {}
+for index, name in ipairs(RAID_ICON_NAMES) do RAID_ICON_INDEX_BY_NAME[name] = index end
+
+local function replaceIconExpressions(value)
+    value = string.gsub(value, "%{rt(%d)%}", function(digit)
+        local index = tonumber(digit)
+        return "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_" .. index .. ":0|t"
+    end)
+    value = string.gsub(value, "%{(%a+)%}", function(word)
+        local index = RAID_ICON_INDEX_BY_NAME[string.lower(word)]
+        if not index then return "{" .. word .. "}" end
+        return "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_" .. index .. ":0|t"
+    end)
+    return value
+end
+
+-- Quest links carry no color of their own in the raw message text - the
+-- green/yellow/orange/red difficulty color depends on the *viewer's* own
+-- level relative to the quest, which can't be baked into a message shared
+-- with everyone. The real chat frame computes it locally on display; do the
+-- same here via GetQuestDifficultyColor, or the link just renders as plain
+-- text like the rest of the message.
+local function questDifficultyColor(level)
+    if not GetQuestDifficultyColor then return 1, 1, 0.2 end
+    local a, b, c = GetQuestDifficultyColor(level)
+    if type(a) == "table" then return a.r, a.g, a.b end
+    return a or 1, b or 1, c or 0.2
+end
+
+-- Questie posts its own quest references as plain text (confirmed via the
+-- raw saved message - no |H markup at all) and makes them clickable in the
+-- default chat by hooking that frame directly and pattern-matching its own
+-- formats, not through a real hyperlink. It uses two different formats:
+-- its own tracker/log gives "[[level] Name (id)]", while shift-clicking a
+-- quest from the default Blizzard quest log gets reformatted by the same
+-- hook down to "[Name (id)]" with no level. We can't hook Questie's
+-- internals, but since the quest ID is right there in the text either way,
+-- we can build our own real "quest:id:level" link from it and run it
+-- through the same click/tooltip/color handling as a native one.
+local function synthesizeQuestieLinks(value)
+    value = string.gsub(value, "(%[%[(%d+)%] .- %(%d+%)%])", function(whole, level)
+        local questID = string.match(whole, "%((%d+)%)%]$")
+        if not questID then return whole end
+        return "|Hquest:" .. questID .. ":" .. level .. "|h" .. whole .. "|h"
+    end)
+    -- No level is present in this shorter form, so approximate the
+    -- difficulty color using the reader's own level.
+    value = string.gsub(value, "(%[[^%[%]]-%(%d+%)%])", function(whole)
+        local questID = string.match(whole, "%((%d+)%)%]$")
+        if not questID then return whole end
+        local level = (UnitLevel and UnitLevel("player")) or 1
+        return "|Hquest:" .. questID .. ":" .. level .. "|h" .. whole .. "|h"
+    end)
+    return value
+end
+
+local function colorizeQuestLinks(value)
+    -- Classic quest links carry more colon-separated fields than just
+    -- "quest:id:level" (e.g. "quest:8929:60:1:1:1:1:0"), so match everything
+    -- up to the next "|h" rather than assuming exactly two numbers - that
+    -- stricter pattern silently matched nothing at all.
+    return string.gsub(value, "(|Hquest:([^|]+)|h%[.-%]|h)", function(linkPart, params)
+        local level = string.match(params, "^%d+:(%d+)")
+        local r, g, b = questDifficultyColor(tonumber(level) or 0)
+        return string.format("|cff%02x%02x%02x%s|r", r * 255, g * 255, b * 255, linkPart)
+    end)
+end
+
+-- Collapses item/spell/etc links down to their bracketed display name and
+-- drops color codes, for plain-text export/copy where WoW's markup would
+-- otherwise show up as unreadable escape sequences.
+local function plainText(value)
+    value = value or ""
+    value = string.gsub(value, "|H.-|h(.-)|h", "%1")
+    value = string.gsub(value, "|c%x%x%x%x%x%x%x%x", "")
+    value = string.gsub(value, "|r", "")
+    return value
+end
+
+-- Rounding a frame's saved/restored screen position and size to whole
+-- pixels (via PixelUtil when available) avoids the blurry text you get once
+-- a window has been freely dragged/resized to a fractional-pixel position.
+local function setPixelPoint(frame, point, relativeTo, relativePoint, x, y)
+    x, y = math.floor((x or 0) + 0.5), math.floor((y or 0) + 0.5)
+    if PixelUtil and PixelUtil.SetPoint then
+        PixelUtil.SetPoint(frame, point, relativeTo, relativePoint, x, y)
+    else
+        frame:SetPoint(point, relativeTo, relativePoint, x, y)
+    end
+end
+
+local function setPixelSize(frame, width, height)
+    width, height = math.floor(width + 0.5), math.floor(height + 0.5)
+    if PixelUtil and PixelUtil.SetSize then
+        PixelUtil.SetSize(frame, width, height)
+    else
+        frame:SetSize(width, height)
+    end
+end
+
+-- After a drag, GetPoint() reports whichever corner ended up closest to a
+-- screen edge - not necessarily TOPLEFT. The resize grip always calls
+-- StartSizing("BOTTOMRIGHT"), which assumes a TOPLEFT-anchored frame; if the
+-- frame's actual anchor had become e.g. BOTTOMRIGHT (dragged near that edge
+-- of the screen), the anchor and the resize corner conflict and the frame's
+-- size computation goes haywire (reported: window jumps to full screen size
+-- and behaves erratically on resize). Re-anchoring to a known TOPLEFT point
+-- after every move keeps StartSizing's assumption valid.
+local function normalizeTopLeft(frame)
+    local scale = frame:GetEffectiveScale()
+    local parentScale = UIParent:GetEffectiveScale()
+    local x = frame:GetLeft() * scale / parentScale
+    local y = frame:GetTop() * scale / parentScale
+    frame:ClearAllPoints()
+    setPixelPoint(frame, "TOPLEFT", UIParent, "BOTTOMLEFT", x, y)
+    return x, y
+end
+
+-- Lays widgets out right-to-left along a row, skipping hidden ones, so a
+-- header button row with a variable set of visible buttons (icon buttons,
+-- text buttons with changing labels) stays evenly spaced instead of using
+-- independent fixed offsets that drift apart once widths change.
+local function flowRight(anchor, xOffset, yOffset, gap, widgets)
+    local previous
+    for _, widget in ipairs(widgets) do
+        if widget:IsShown() then
+            widget:ClearAllPoints()
+            if previous then
+                widget:SetPoint("RIGHT", previous, "LEFT", -gap, 0)
+            else
+                widget:SetPoint("TOPRIGHT", anchor, "TOPRIGHT", xOffset, yOffset)
+            end
+            previous = widget
+        end
+    end
+end
+
+-- Reusable frame pool: refresh loops reuse existing rows instead of creating
+-- new ones every call, which previously leaked frames on every chat event
+-- (list rebuild ran on every incoming whisper/guild/party message) and
+-- eventually overflowed Lua's stack when GetChildren() had to return them all.
+local function poolStart(content)
+    content.pool = content.pool or { items = {}, count = 0 }
+    content.pool.count = 0
+end
+
+local function poolRow(content, factory)
+    local pool = content.pool
+    pool.count = pool.count + 1
+    local row = pool.items[pool.count]
+    if not row then
+        row = factory(content)
+        pool.items[pool.count] = row
+    end
+    row:Show()
+    return row
+end
+
+local function poolFinish(content)
+    local pool = content.pool
+    if not pool then return end
+    for i = pool.count + 1, #pool.items do
+        pool.items[i]:Hide()
+    end
+end
+
+local function scroll(parent)
+    local frame = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
+    local content = CreateFrame("Frame", nil, frame)
+    content:SetSize(1, 1)
+    frame:SetScrollChild(content)
+    frame.content = content
+    return frame
+end
+
+function SW:CreateUI()
+    if self.ui and self.ui.frame then return end
+    self.ui = { panels = {}, activeTab = "Messages", selectedKey = nil }
+    local frame = CreateFrame("Frame", "SaveWhispersFrame", UIParent, BACKDROP)
+    setPixelSize(frame, 900, 620)
+    -- "MEDIUM" is the strata Blizzard's own windows use by default
+    -- (bags, spellbook, character, quest log never call SetFrameStrata,
+    -- so they stay on CreateFrame's default of "MEDIUM"). Anything above
+    -- that ("HIGH", "DIALOG", ...) would always render on top of them
+    -- regardless of click order. SetToplevel gives normal click-to-raise
+    -- behavior within that shared strata instead.
+    frame:SetFrameStrata("MEDIUM")
+    frame:SetToplevel(true)
+    frame:SetClampedToScreen(true)
+    frame:SetMovable(true)
+    frame:SetResizable(true)
+    local parentWidth, parentHeight = UIParent:GetWidth(), UIParent:GetHeight()
+    if not parentWidth or parentWidth < 700 then parentWidth = 1200 end
+    if not parentHeight or parentHeight < 500 then parentHeight = 900 end
+    local maxWidth = math.max(700, parentWidth - 40)
+    local maxHeight = math.max(480, parentHeight - 40)
+    if frame.SetResizeBounds then
+        frame:SetResizeBounds(700, 480, maxWidth, maxHeight)
+    elseif frame.SetMinResize then
+        frame:SetMinResize(700, 480)
+    end
+    frame:EnableMouse(true)
+    frame:RegisterForDrag("LeftButton")
+    frame:SetBackdrop(DIALOG_BACKDROP)
+    local saved = self.DB.window or {}
+    if saved.width and saved.height then
+        setPixelSize(frame, math.min(maxWidth, math.max(700, saved.width)), math.min(maxHeight, math.max(480, saved.height)))
+    end
+    -- Always normalized to a TOPLEFT anchor (see normalizeTopLeft) - old
+    -- saved positions from before this fix get normalized on load too.
+    if saved.point then
+        setPixelPoint(frame, saved.point, UIParent, saved.relativePoint or saved.point, saved.x or 0, saved.y or 0)
+    else
+        setPixelPoint(frame, "CENTER", UIParent, "CENTER", 0, 30)
+    end
+    normalizeTopLeft(frame)
+    frame:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    frame:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local x, y = normalizeTopLeft(self)
+        local window = SW.DB.window or {}
+        window.point, window.relativePoint = "TOPLEFT", "BOTTOMLEFT"
+        window.x, window.y = math.floor(x + 0.5), math.floor(y + 0.5)
+        SW.DB.window = window
+    end)
+    frame:Hide()
+    self.ui.frame = frame
+
+    local resize = CreateFrame("Button", nil, frame)
+    resize:SetSize(18, 18)
+    resize:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -6, 6)
+    resize.texture = resize:CreateTexture(nil, "ARTWORK")
+    resize.texture:SetAllPoints()
+    resize.texture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    resize:SetScript("OnEnter", function(self) self.texture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down") end)
+    resize:SetScript("OnLeave", function(self) self.texture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up") end)
+    resize:SetScript("OnMouseDown", function() frame:StartSizing("BOTTOMRIGHT") end)
+    resize:SetScript("OnMouseUp", function()
+        frame:StopMovingOrSizing()
+        local newWidth = math.min(frame:GetWidth(), maxWidth)
+        local newHeight = math.min(frame:GetHeight(), maxHeight)
+        setPixelSize(frame, newWidth, newHeight)
+        local x, y = normalizeTopLeft(frame)
+        local window = SW.DB.window or {}
+        window.width, window.height = math.floor(newWidth + 0.5), math.floor(newHeight + 0.5)
+        window.point, window.relativePoint = "TOPLEFT", "BOTTOMLEFT"
+        window.x, window.y = math.floor(x + 0.5), math.floor(y + 0.5)
+        SW.DB.window = window
+        SW:RefreshUI()
+    end)
+
+    local close = CreateFrame("Button", "SaveWhispersFrameCloseButton", frame, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", -6, -7)
+    close:SetScript("OnClick", function() SW:ToggleMainFrame(false) end)
+    -- Belt-and-suspenders: whatever hides this frame, an EditBox inside it
+    -- (message box, name field, ...) must not keep keyboard focus while
+    -- invisible, or it silently keeps eating every keystroke.
+    frame:SetScript("OnHide", function() SW:ClearInputFocus() end)
+
+    local icon = frame:CreateTexture(nil, "ARTWORK")
+    icon:SetPoint("TOPLEFT", 18, -14)
+    icon:SetSize(36, 36)
+    icon:SetTexture(ICON)
+    local title = text(frame, "SaveWhispers", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", icon, "TOPRIGHT", 10, -4)
+    local subtitle = text(frame, "Your saved private messages", "GameFontDisableSmall")
+    subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 1, -4)
+
+    -- Right-aligned, text-width tabs sitting level with the title instead of
+    -- their own oversized row: uses the empty space next to "SaveWhispers"
+    -- instead of wasting a whole extra row of padded, fixed-width buttons.
+    local tabBar = CreateFrame("Frame", nil, frame)
+    tabBar:SetPoint("TOPLEFT", frame, "TOPLEFT", 18, -22)
+    tabBar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -46, -22)
+    tabBar:SetHeight(20)
+    self.ui.tabs = {}
+    local tabNames = { "Messages", "Watchlist", "Settings", "Changelog" }
+    local previous
+    for i = #tabNames, 1, -1 do
+        local tabName = tabNames[i]
+        local tab = button(tabBar, tabName, 10, 20)
+        local fontString = tab:GetFontString()
+        tab:SetWidth((fontString and fontString:GetStringWidth() or 40) + 20)
+        if previous then tab:SetPoint("RIGHT", previous, "LEFT", -4, 0) else tab:SetPoint("RIGHT", tabBar, "RIGHT", 0, 0) end
+        tab:SetScript("OnClick", function() SW:SwitchTab(tabName) end)
+        self.ui.tabs[tabName] = tab
+        previous = tab
+    end
+
+    local content = CreateFrame("Frame", nil, frame)
+    content:SetPoint("TOPLEFT", frame, "TOPLEFT", 18, -62)
+    content:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -18, 18)
+    self.ui.content = content
+    self:BuildMessagesPanel()
+    self:BuildWatchlistPanel()
+    self:BuildSettingsPanel()
+    self:BuildChangelogPanel()
+    self:SwitchTab("Messages")
+end
+
+function SW:NewPanel(name)
+    local panel = CreateFrame("Frame", nil, self.ui.content)
+    panel:SetAllPoints()
+    panel:Hide()
+    self.ui.panels[name] = panel
+    return panel
+end
+
+-- Hiding a panel (switching tabs, closing the window) doesn't clear
+-- keyboard focus from an EditBox inside it - the now-invisible box quietly
+-- keeps eating every keystroke (WASD etc. type into it instead of moving)
+-- until something explicitly calls ClearFocus.
+function SW:ClearInputFocus()
+    local messages = self.ui and self.ui.panels and self.ui.panels.Messages
+    if messages then
+        if messages.message then messages.message:ClearFocus() end
+        if messages.target then messages.target:ClearFocus() end
+    end
+    local watchlist = self.ui and self.ui.panels and self.ui.panels.Watchlist
+    if watchlist and watchlist.addName then watchlist.addName:ClearFocus() end
+end
+
+function SW:SwitchTab(name)
+    if not self.ui then return end
+    self:ClearInputFocus()
+    self.ui.activeTab = name
+    for key, panel in pairs(self.ui.panels) do
+        if key == name then panel:Show() else panel:Hide() end
+    end
+    for key, tab in pairs(self.ui.tabs) do
+        if key == name then tab:LockHighlight() else tab:UnlockHighlight() end
+    end
+    self:RefreshUI()
+end
+
+function SW:BuildMessagesPanel()
+    local panel = self:NewPanel("Messages")
+    panel.left = inset(panel)
+    panel.left:SetPoint("TOPLEFT", 0, 0)
+    panel.left:SetPoint("BOTTOMLEFT", 0, 0)
+    panel.left:SetWidth(242)
+    -- One compact heading line ("Conversations  73/200") instead of two,
+    -- freeing a whole row so "+ Add channel" can share a row with
+    -- "Select DMs" rather than sitting on its own line below.
+    panel.counter = text(panel.left, "Conversations", "GameFontDisableSmall")
+    panel.counter:SetPoint("TOPLEFT", 14, -12)
+    panel.select = fitButton(button(panel.left, "Select DMs", 10, 22))
+    -- -30, not -12: flush with the list's right edge below, which is inset
+    -- further to leave room for its scrollbar.
+    panel.select:SetPoint("TOPRIGHT", -30, -34)
+    panel.select:SetScript("OnClick", function()
+        SW.ui.selectMode = not SW.ui.selectMode
+        SW.ui.selectedDMs = {}
+        SW:RefreshUI()
+    end)
+    panel.addChannel = fitButton(button(panel.left, "+ Add channel", 10, 22))
+    panel.addChannel:SetPoint("RIGHT", panel.select, "LEFT", -6, 0)
+    -- "Open" is pinned to the same -30 right edge as "Select DMs"/the list
+    -- below, instead of floating off the input field's width - otherwise
+    -- its edge drifts depending on how wide the button's own label renders,
+    -- landing it out of line with everything else in the column.
+    panel.add = fitButton(button(panel.left, "Open", 10, 22))
+    panel.add:SetPoint("TOPRIGHT", -30, -62)
+    panel.target = edit(panel.left, 140, 22, "Player / channel", function(value) return SW:GetNameSuggestions(value) end)
+    panel.target:SetPoint("TOPLEFT", 12, -62)
+    panel.target:SetPoint("RIGHT", panel.add, "LEFT", -6, 0)
+    panel.add:SetScript("OnClick", function()
+        local conversation, err = SW:EnsureConversation(fieldValue(panel.target))
+        if conversation then SW.ui.selectedKey = conversation.key; conversation.unread = 0; SW.ui.selectMode = false; SW:RefreshUI() else SW:Print(err) end
+    end)
+    panel.addChannel:SetScript("OnClick", function()
+        local ok, result = SW:AddChannelChat(fieldValue(panel.target))
+        if ok then
+            SW.ui.selectedKey = result.key
+            panel.target:SetText(panel.target.hint)
+            SW:RefreshUI()
+        else
+            SW:Print(result)
+        end
+    end)
+    panel.list = scroll(panel.left)
+    panel.list:SetPoint("TOPLEFT", 12, -92)
+    panel.list:SetPoint("BOTTOMRIGHT", -30, 48)
+    panel.deleteSelected = button(panel.left, "Delete selected", 122, 22)
+    panel.deleteSelected:SetPoint("BOTTOMLEFT", 12, 12)
+    panel.deleteSelected:SetScript("OnClick", function()
+        local removed = 0
+        for key in pairs(SW.ui.selectedDMs or {}) do
+            if SW:GetConversation(key) then SW.DB.conversations[key] = nil; removed = removed + 1 end
+        end
+        if removed == 0 then SW:Print("Select at least one DM first."); return end
+        SW.ui.selectedDMs = {}; SW.ui.selectMode = false; SW.ui.selectedKey = nil
+        SW:NotifyDataChanged()
+    end)
+    panel.cancelSelected = button(panel.left, "Cancel", 64, 22)
+    panel.cancelSelected:SetPoint("LEFT", panel.deleteSelected, "RIGHT", 6, 0)
+    panel.cancelSelected:SetScript("OnClick", function() SW.ui.selectedDMs = {}; SW.ui.selectMode = false; SW:RefreshUI() end)
+
+    panel.right = inset(panel)
+    panel.right:SetPoint("TOPLEFT", panel.left, "TOPRIGHT", 12, 0)
+    panel.right:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 0)
+    panel.contactFavoriteIcon = panel.right:CreateTexture(nil, "ARTWORK")
+    panel.contactFavoriteIcon:SetSize(16, 16)
+    panel.contactFavoriteIcon:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_1")
+    panel.contactFavoriteIcon:Hide()
+    panel.contact = text(panel.right, "Select a conversation", "GameFontNormalLarge")
+    panel.contact:SetPoint("TOPLEFT", 16, -12)
+    panel.contactRealm = text(panel.right, "", "GameFontDisableSmall")
+    panel.contactRealm:SetPoint("TOPLEFT", panel.contact, "BOTTOMLEFT", 1, -3)
+    panel.statusDot = panel.right:CreateTexture(nil, "OVERLAY")
+    panel.statusDot:SetSize(14, 14)
+    panel.statusDot:SetPoint("LEFT", panel.contact, "RIGHT", 6, 3)
+    panel.statusText = text(panel.right, "(Offline)", "GameFontDisableSmall")
+    panel.statusText:SetPoint("LEFT", panel.statusDot, "RIGHT", 4, 0)
+    -- Positioned via flowRight() in RefreshChatPanel instead of fixed offsets,
+    -- since which buttons are visible (and Delete DM's label) changes.
+    panel.copyName = fitButton(button(panel.right, "Copy name", 10, 22))
+    panel.copyName:SetScript("OnClick", function()
+        local conversation = SW:GetConversation(SW.ui.selectedKey)
+        if conversation then SW:ShowCopyPopup("Copy name", conversation.name) end
+    end)
+    panel.exportChat = fitButton(button(panel.right, "Export chat", 10, 22))
+    panel.exportChat:SetScript("OnClick", function()
+        local conversation = SW:GetConversation(SW.ui.selectedKey)
+        if not conversation then return end
+        local lines = {}
+        for _, message in ipairs(conversation.messages or {}) do
+            local speaker = message.outgoing and "You" or (message.sender or conversation.name)
+            lines[#lines + 1] = "[" .. date("%Y-%m-%d %H:%M:%S", message.timestamp or 0) .. "] " .. speaker .. ": " .. plainText(message.text)
+        end
+        SW:ShowCopyPopup("Export - " .. conversation.name, table.concat(lines, "\n"))
+    end)
+    panel.star = iconButton(panel.right, "Interface\\TargetingFrame\\UI-RaidTargetingIcon_1", "Toggle watchlist favorite")
+    panel.star:SetScript("OnClick", function() if SW.ui.selectedKey then SW:ToggleFavorite(SW.ui.selectedKey) end end)
+    panel.pin = iconButton(panel.right, "Interface\\TargetingFrame\\UI-RaidTargetingIcon_3", "Pin to top of list")
+    panel.pin:SetScript("OnClick", function()
+        if SW.ui.selectedKey then
+            local ok, err = SW:TogglePinned(SW.ui.selectedKey)
+            if not ok then SW:Print(err) end
+        end
+    end)
+    panel.members = fitButton(button(panel.right, "Members", 10, 24))
+    panel.members:SetScript("OnClick", function()
+        local conversation = SW:GetConversation(SW.ui.selectedKey)
+        if conversation then SW:ShowMembers(conversation) end
+    end)
+    panel.delete = button(panel.right, "Delete DM", 10, 24)
+    panel.delete:SetScript("OnClick", function() if SW.ui.selectedKey then SW:DeleteConversation(SW.ui.selectedKey) end end)
+    panel.chat = scroll(panel.right)
+    panel.message = edit(panel.right, 1, 32, "Write a message...")
+    panel.message:SetPoint("BOTTOMLEFT", 16, 12)
+    panel.message:SetPoint("BOTTOMRIGHT", -96, 12)
+    panel.send = button(panel.right, "Send", 72, 32)
+    panel.send:SetPoint("BOTTOMRIGHT", -14, 12)
+    panel.chat:SetPoint("TOPLEFT", 16, -64)
+    panel.chat:SetPoint("TOPRIGHT", -32, -64)
+    -- Bottom anchor is redone per-refresh in RefreshChatPanel, since it
+    -- depends on whether the message/send row is shown (real DMs only).
+    local function send()
+        local conversation = SW:GetConversation(SW.ui.selectedKey)
+        if not conversation then SW:Print("Select a conversation first."); return end
+        local ok, err = SW:SendWhisper(conversation.name, fieldValue(panel.message))
+        if ok then
+            panel.message:SetText("")
+            panel.message:SetFocus()
+        else
+            SW:Print(err)
+        end
+    end
+    panel.send:SetScript("OnClick", send)
+    panel.message:SetScript("OnEnterPressed", function() send() end)
+end
+
+local ROW_HEIGHT = 22
+
+-- One compact line per conversation: icons, name, realm and unread count all
+-- share a single row instead of a 3-line card with a message preview.
+local function createConversationRow(parent)
+    local row = CreateFrame("Button", nil, parent)
+    row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+    row.selected = row:CreateTexture(nil, "BACKGROUND")
+    row.selected:SetAllPoints()
+    row.selected:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
+    row.selected:SetBlendMode("ADD")
+    row.selected:Hide()
+    row.pinIcon = row:CreateTexture(nil, "ARTWORK")
+    row.pinIcon:SetSize(13, 13)
+    row.pinIcon:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_3")
+    row.favoriteIcon = row:CreateTexture(nil, "ARTWORK")
+    row.favoriteIcon:SetSize(13, 13)
+    row.favoriteIcon:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_1")
+    row.name = text(row, "", "GameFontHighlightSmall")
+    row.realm = text(row, "", "GameFontDisableSmall")
+    row.realm:SetPoint("LEFT", row.name, "RIGHT", 5, 0)
+    row.unread = text(row, "", "GameFontNormalSmall", 1, 0.39, 0.66)
+    row.unread:SetPoint("RIGHT", -8, 0)
+    return row
+end
+
+function SW:RefreshMessagesPanel()
+    local panel = self.ui.panels.Messages
+    if not panel then return end
+    local conversations = self:GetSortedConversations(false)
+    if self.ui.selectedKey and not self:GetConversation(self.ui.selectedKey) then self.ui.selectedKey = nil end
+    if not self.ui.selectedKey and conversations[1] then self.ui.selectedKey = conversations[1].key end
+    local maximum = math.max(1, math.floor(tonumber(self.DB.settings.maxConversations) or 200))
+    local dmCount = 0
+    for _ in pairs(self.DB.conversations or {}) do dmCount = dmCount + 1 end
+    panel.counter:SetText((self.ui.selectMode and "Select DMs" or "Conversations") .. "  " .. dmCount .. "/" .. maximum)
+    panel.select:SetText(self.ui.selectMode and "Done" or "Select DMs")
+    fitButton(panel.select)
+    panel.addChannel:SetPoint("RIGHT", panel.select, "LEFT", -6, 0)
+    if self.ui.selectMode then panel.deleteSelected:Show(); panel.cancelSelected:Show() else panel.deleteSelected:Hide(); panel.cancelSelected:Hide() end
+    -- The list only needs to leave room at the bottom for the delete/cancel
+    -- buttons while they're actually visible; otherwise it should reach all
+    -- the way down instead of leaving a dead gap above the panel border.
+    panel.list:ClearAllPoints()
+    panel.list:SetPoint("TOPLEFT", panel.left, "TOPLEFT", 12, -92)
+    panel.list:SetPoint("BOTTOMRIGHT", panel.left, "BOTTOMRIGHT", -30, self.ui.selectMode and 48 or 12)
+    local content = panel.list.content
+    poolStart(content)
+    local listWidth = math.max(180, panel.list:GetWidth() - 4)
+    local y = 0
+    for _, conversation in ipairs(conversations) do
+        local row = poolRow(content, createConversationRow)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", 0, y)
+        row:SetSize(listWidth, ROW_HEIGHT)
+        local selected = conversation.key == self.ui.selectedKey
+        local marked = self.ui.selectedDMs and self.ui.selectedDMs[conversation.key]
+        row.selected:SetShown(selected or marked)
+        local marker = self.ui.selectMode and (marked and "[x] " or "[ ] ") or ""
+        local base, realm = splitRealm(conversation.name)
+        if conversation.system and conversation.channel == "guild" and GetGuildInfo then
+            realm = GetGuildInfo("player")
+        end
+        row.name:SetText(marker .. base)
+        row.realm:SetText(realm and ("(" .. realm .. ")") or "")
+        row.realm:SetShown(realm ~= nil)
+        -- Only icons that are actually shown reserve space, so a row with
+        -- neither pin nor favorite hugs the left edge instead of leaving a
+        -- gap where a hidden icon would have been.
+        local iconX = 8
+        row.pinIcon:ClearAllPoints()
+        if conversation.pinned then
+            row.pinIcon:SetPoint("LEFT", iconX, 0)
+            row.pinIcon:Show()
+            iconX = iconX + 16
+        else
+            row.pinIcon:Hide()
+        end
+        row.favoriteIcon:ClearAllPoints()
+        if conversation.favorite then
+            row.favoriteIcon:SetPoint("LEFT", iconX, 0)
+            row.favoriteIcon:Show()
+            iconX = iconX + 16
+        else
+            row.favoriteIcon:Hide()
+        end
+        row.name:ClearAllPoints()
+        row.name:SetPoint("LEFT", iconX, 0)
+        if conversation.unread and conversation.unread > 0 then
+            row.unread:SetText("[" .. (conversation.unread > 99 and "99+" or tostring(conversation.unread)) .. "]")
+            row.unread:Show()
+        else
+            row.unread:Hide()
+        end
+        row:SetScript("OnClick", function()
+            if SW.ui.selectMode then
+                SW.ui.selectedDMs = SW.ui.selectedDMs or {}
+                SW.ui.selectedDMs[conversation.key] = not SW.ui.selectedDMs[conversation.key] or nil
+            else
+                SW.ui.selectedKey = conversation.key
+                conversation.unread = 0
+            end
+            SW:RefreshUI()
+        end)
+        y = y - (ROW_HEIGHT + 2)
+    end
+    poolFinish(content)
+    content:SetSize(listWidth, math.max(panel.list:GetHeight(), -y + 4))
+    self:RefreshChatPanel()
+end
+
+-- A Button wrapping the line's FontString, rather than relying on
+-- FontString:SetHyperlinksEnabled (a newer API that isn't reliably present
+-- on this client - it silently no-ops instead of erroring). Used both as a
+-- whole-line widget (date separators, system notes, the members line) and,
+-- via poolLinkToken below, as the widget for a single link token within a
+-- word-wrapped message.
+local function createChatLine(parent)
+    local line = CreateFrame("Button", nil, parent)
+    -- A Button created without a template doesn't register for any click
+    -- type by default, so OnClick silently never fired - only OnEnter/
+    -- OnLeave (hover tooltip) worked, which is why links looked "almost"
+    -- clickable.
+    line:EnableMouse(true)
+    line:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    line.text = text(line, "", "GameFontHighlightSmall")
+    line.text:SetPoint("TOPLEFT", 0, 0)
+    line.text:SetJustifyV("TOP")
+    if line.text.SetWordWrap then line.text:SetWordWrap(true) end
+    line:SetScript("OnEnter", function(self)
+        if self.link then
+            GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+            GameTooltip:SetHyperlink(self.link)
+            GameTooltip:Show()
+        end
+    end)
+    line:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    line:SetScript("OnClick", function(self, mouseButton)
+        if self.link and SetItemRef then SetItemRef(self.link, "", mouseButton, self) end
+    end)
+    return line
+end
+
+-- Splits a fully-processed message (colors/icons/synthesized quest links
+-- already applied) into an ordered list of tokens: {kind="word", text=...}
+-- for a single space-free run of plain text, or {kind="link", link=...,
+-- text=...} for one whole "|cAARRGGBB|Hdata|h[Display]|h|r" hyperlink,
+-- kept atomic (never split mid-link). This lets each hyperlink in a
+-- message get laid out as its own widget with its own hit-box, instead of
+-- one FontString/Button per whole line only ever exposing the first link
+-- it happened to contain.
+local function tokenizeMessage(value)
+    local tokens = {}
+    local pos, len = 1, #value
+    while pos <= len do
+        local linkStart, linkEnd, colorCode, linkData, display =
+            string.find(value, "(|c%x%x%x%x%x%x%x%x)|H(.-)|h(.-)|h|r", pos)
+        local plainEnd = linkStart and (linkStart - 1) or len
+        if plainEnd >= pos then
+            for word in string.gmatch(string.sub(value, pos, plainEnd), "%S+") do
+                tokens[#tokens + 1] = { kind = "word", text = word }
+            end
+        end
+        if not linkStart then break end
+        tokens[#tokens + 1] = {
+            kind = "link",
+            link = linkData,
+            text = colorCode .. "|H" .. linkData .. "|h" .. display .. "|h|r",
+        }
+        pos = linkEnd + 1
+    end
+    return tokens
+end
+
+-- Separate pools from the generic poolStart/poolRow/poolFinish above (which
+-- stay untouched for every other list in this file): a chat message needs a
+-- variable number of word/link widgets, not one widget per row.
+local function poolWordToken(content)
+    content.wordPool = content.wordPool or { items = {}, count = 0 }
+    local pool = content.wordPool
+    pool.count = pool.count + 1
+    local item = pool.items[pool.count]
+    if not item then
+        item = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        item:SetJustifyH("LEFT")
+        item:SetJustifyV("TOP")
+        pool.items[pool.count] = item
+    end
+    item:Show()
+    return item
+end
+
+local function poolLinkToken(content)
+    content.linkPool = content.linkPool or { items = {}, count = 0 }
+    local pool = content.linkPool
+    pool.count = pool.count + 1
+    local item = pool.items[pool.count]
+    if not item then
+        item = createChatLine(content)
+        pool.items[pool.count] = item
+    end
+    item:Show()
+    return item
+end
+
+local function resetTokenPools(content)
+    if content.wordPool then content.wordPool.count = 0 end
+    if content.linkPool then content.linkPool.count = 0 end
+end
+
+local function finishTokenPools(content)
+    if content.wordPool then
+        for i = content.wordPool.count + 1, #content.wordPool.items do content.wordPool.items[i]:Hide() end
+    end
+    if content.linkPool then
+        for i = content.linkPool.count + 1, #content.linkPool.items do content.linkPool.items[i]:Hide() end
+    end
+end
+
+function SW:RefreshChatPanel()
+    local panel = self.ui.panels.Messages
+    local conversation = self:GetConversation(self.ui.selectedKey)
+    local content = panel.chat.content
+    poolStart(content)
+    resetTokenPools(content)
+    if not conversation then
+        panel.contact:SetText("Select a conversation")
+        panel.contact:ClearAllPoints()
+        panel.contact:SetPoint("TOPLEFT", 16, -12)
+        panel.contactFavoriteIcon:Hide()
+        panel.contactRealm:Hide()
+        panel.statusDot:Hide(); panel.statusText:Hide()
+        panel.star:Hide(); panel.pin:Hide(); panel.members:Hide(); panel.delete:Hide()
+        panel.copyName:Hide(); panel.exportChat:Hide()
+        panel.message:Hide(); panel.send:Hide()
+        panel.chat:ClearAllPoints()
+        panel.chat:SetPoint("TOPLEFT", 16, -64)
+        panel.chat:SetPoint("TOPRIGHT", -32, -64)
+        panel.chat:SetPoint("BOTTOMLEFT", panel.right, "BOTTOMLEFT", 16, 12)
+        panel.chat:SetPoint("BOTTOMRIGHT", panel.right, "BOTTOMRIGHT", -32, 12)
+        poolFinish(content)
+        finishTokenPools(content)
+        return
+    end
+    local base, realm = splitRealm(conversation.name)
+    if conversation.system and conversation.channel == "guild" and GetGuildInfo then
+        realm = GetGuildInfo("player")
+    end
+    panel.contact:SetText(base)
+    panel.contact:ClearAllPoints()
+    if conversation.favorite then
+        panel.contactFavoriteIcon:SetPoint("TOPLEFT", 16, -13)
+        panel.contactFavoriteIcon:Show()
+        panel.contact:SetPoint("TOPLEFT", panel.contactFavoriteIcon, "TOPRIGHT", 6, 1)
+    else
+        panel.contactFavoriteIcon:Hide()
+        panel.contact:SetPoint("TOPLEFT", 16, -12)
+    end
+    panel.contactRealm:SetText(realm and ("(" .. realm .. ")") or "")
+    panel.contactRealm:SetShown(realm ~= nil)
+    -- "Copy name" doesn't make sense for the shared Guild/Party/Raid/channel
+    -- conversations, only for a real player DM.
+    panel.copyName:SetShown(not conversation.system)
+    panel.exportChat:Show()
+    if conversation.system then
+        panel.star:Hide(); panel.members:Show(); panel.pin:Show(); panel.statusDot:Hide(); panel.statusText:Hide()
+        if conversation.channel == "channel" then
+            panel.delete:SetText("Remove")
+            panel.delete:Show()
+        elseif conversation.channel == "party" or conversation.channel == "raid" then
+            panel.delete:SetText("Delete session")
+            panel.delete:Show()
+        else
+            panel.delete:Hide()
+        end
+        -- Guild/Party/Raid/channel chat is read-only in this addon (it
+        -- only ever mirrors what the real chat frame sends) - the input
+        -- row doesn't apply, so hide it instead of just disabling it.
+        panel.message:Hide(); panel.send:Hide()
+        panel.chat:ClearAllPoints()
+        panel.chat:SetPoint("TOPLEFT", 16, -64)
+        panel.chat:SetPoint("TOPRIGHT", -32, -64)
+        panel.chat:SetPoint("BOTTOMLEFT", panel.right, "BOTTOMLEFT", 16, 12)
+        panel.chat:SetPoint("BOTTOMRIGHT", panel.right, "BOTTOMRIGHT", -32, 12)
+    else
+        panel.star:Show(); panel.members:Hide(); panel.pin:Show(); panel.delete:Show(); panel.delete:SetText("Delete DM"); panel.message:Show(); panel.send:Show(); panel.message:Enable(); panel.send:Enable()
+        panel.chat:ClearAllPoints()
+        panel.chat:SetPoint("TOPLEFT", 16, -64)
+        panel.chat:SetPoint("TOPRIGHT", -32, -64)
+        panel.chat:SetPoint("BOTTOMLEFT", panel.right, "BOTTOMLEFT", 16, 54)
+        panel.chat:SetPoint("BOTTOMRIGHT", panel.right, "BOTTOMRIGHT", -32, 54)
+        local state = self:GetContactStatus(conversation.name)
+        local indicator = state == "online" and "Green" or (state == "busy" and "Yellow" or "Gray")
+        local stateLabel = state == "online" and "Online" or (state == "busy" and "Busy" or "Offline")
+        panel.statusDot:ClearAllPoints()
+        panel.statusDot:SetPoint("LEFT", panel.contact, "LEFT", panel.contact:GetStringWidth() + 8, 3)
+        panel.statusDot:SetTexture("Interface\\COMMON\\Indicator-" .. indicator)
+        panel.statusDot:Show()
+        panel.statusText:SetText("(" .. stateLabel .. ")")
+        if state == "online" then panel.statusText:SetTextColor(0.20, 0.80, 0.38)
+        elseif state == "busy" then panel.statusText:SetTextColor(0.95, 0.75, 0.18)
+        else panel.statusText:SetTextColor(0.62, 0.62, 0.62) end
+        panel.statusText:Show()
+        if conversation.favorite then panel.star:LockHighlight() else panel.star:UnlockHighlight() end
+    end
+    if conversation.pinned then panel.pin:LockHighlight() else panel.pin:UnlockHighlight() end
+    fitButton(panel.delete)
+    -- Copy/Export live on their own row below Pin/Star/Delete DM instead of
+    -- sharing the top row - with 6 buttons crammed against the right edge
+    -- the row got long enough to run into the contact name on the left.
+    flowRight(panel.right, -12, -10, 6, { panel.delete, panel.members, panel.pin, panel.star })
+    flowRight(panel.right, -12, -38, 6, { panel.exportChat, panel.copyName })
+    local width = math.max(340, panel.chat:GetWidth() - 5)
+    local y = 0
+    if conversation.members and #conversation.members > 0 then
+        local membersLine = poolRow(content, createChatLine)
+        membersLine.link = nil
+        membersLine.text:SetJustifyH("LEFT")
+        membersLine.text:SetText("|cffffd100Members:|r " .. table.concat(conversation.members, ", "))
+        membersLine.text:SetTextColor(0.75, 0.75, 0.75)
+        membersLine:ClearAllPoints()
+        membersLine:SetPoint("TOPLEFT", content, "TOPLEFT", 8, y)
+        membersLine.text:SetWidth(width - 16)
+        local membersHeight = membersLine.text:GetStringHeight() or 14
+        membersLine:SetSize(width - 16, membersHeight)
+        y = y - membersHeight - 10
+    end
+    local todayKey = date("%Y-%m-%d")
+    local yesterdayKey = date("%Y-%m-%d", time() - 86400)
+    local lastDayKey = nil
+    for _, message in ipairs(conversation.messages or {}) do
+        local dayKey = date("%Y-%m-%d", message.timestamp or 0)
+        if dayKey ~= lastDayKey then
+            local label
+            if dayKey == todayKey then label = "Today"
+            elseif dayKey == yesterdayKey then label = "Yesterday"
+            else label = date("%B %d, %Y", message.timestamp or 0) end
+            local separator = poolRow(content, createChatLine)
+            separator.link = nil
+            separator.text:SetJustifyH("CENTER")
+            separator.text:SetText("---- " .. label .. " ----")
+            separator.text:SetTextColor(0.62, 0.62, 0.62)
+            separator:ClearAllPoints()
+            separator:SetPoint("TOPLEFT", content, "TOPLEFT", 8, y)
+            separator.text:SetWidth(width - 16)
+            if separator.text.SetTextHeight then separator.text:SetTextHeight(12) end
+            separator:SetSize(width - 16, 16)
+            y = y - 20
+            lastDayKey = dayKey
+        end
+        local chatScale = tonumber(self.DB.settings.chatScale) or 1
+        local fontHeight = math.max(12, math.floor(13 * chatScale))
+        if message.system then
+            -- A synthetic marker (e.g. "Group was converted to a raid"),
+            -- not a real chat message - render like the date separators.
+            local note = poolRow(content, createChatLine)
+            note.link = nil
+            note.text:SetJustifyH("CENTER")
+            note.text:SetText("-- " .. message.text .. " --")
+            note.text:SetTextColor(0.95, 0.75, 0.18)
+            note:ClearAllPoints()
+            note:SetPoint("TOPLEFT", content, "TOPLEFT", 8, y)
+            note.text:SetWidth(width - 16)
+            if note.text.SetTextHeight then note.text:SetTextHeight(12) end
+            note:SetSize(width - 16, 16)
+            y = y - 20
+        else
+            local r, g, b = chatColor(message.outgoing)
+            local speaker, nameColor
+            if message.outgoing then
+                speaker = "You"
+                if UnitClass then
+                    local _, englishClass = UnitClass("player")
+                    local color = englishClass and RAID_CLASS_COLORS and RAID_CLASS_COLORS[englishClass]
+                    if color then nameColor = string.format("%02x%02x%02x", color.r * 255, color.g * 255, color.b * 255) end
+                end
+            else
+                speaker = splitRealm(message.sender or conversation.name)
+                nameColor = classColorHex(message.guid)
+            end
+            -- Class color when known; otherwise fall back to the
+            -- configurable chat color from Settings instead of leaving the
+            -- name uncolored.
+            if not nameColor then nameColor = string.format("%02x%02x%02x", r * 255, g * 255, b * 255) end
+            local speakerText = "|cff" .. nameColor .. speaker .. "|r"
+            local timePrefix = "|cff808080[" .. date("%H:%M:%S", message.timestamp or 0) .. "]|r "
+            -- SetItemRef/GameTooltip:SetHyperlink both want just the inner
+            -- payload (e.g. "quest:2937:60"), not the |H...|h markup around
+            -- it. Passing the raw wrapped form is why quest links didn't
+            -- open the quest tooltip even though item links mostly worked.
+            local processedText = replaceIconExpressions(colorizeQuestLinks(synthesizeQuestieLinks(message.text)))
+            local fullText = timePrefix .. speakerText .. ": " .. processedText
+            -- A message can contain several item/quest links. One
+            -- FontString/Button per whole line only ever exposed the FIRST
+            -- link it found, so hovering anywhere reacted to that one link
+            -- regardless of which item the cursor was actually over. Break
+            -- the line into word/link tokens and lay them out by hand
+            -- (word-wrapping like real text) so every link gets its own
+            -- precise hover/click hit-box.
+            local tokens = tokenizeMessage(fullText)
+            local lineHeight = fontHeight + 4
+            local spaceWidth = math.max(4, math.floor(fontHeight * 0.3))
+            local availableWidth = width - 16
+            local x, first = 0, true
+            for _, token in ipairs(tokens) do
+                local widget, tokenWidth
+                if token.kind == "link" then
+                    widget = poolLinkToken(content)
+                    widget.text:SetText(token.text)
+                    widget.link = token.link
+                    if widget.text.SetTextHeight then widget.text:SetTextHeight(fontHeight) end
+                    tokenWidth = widget.text:GetStringWidth() or 10
+                else
+                    widget = poolWordToken(content)
+                    widget:SetText(token.text)
+                    widget:SetTextColor(0.92, 0.92, 0.92)
+                    if widget.SetTextHeight then widget:SetTextHeight(fontHeight) end
+                    tokenWidth = widget:GetStringWidth() or 10
+                end
+                if not first and x + spaceWidth + tokenWidth > availableWidth then
+                    x = 0
+                    y = y - lineHeight
+                    first = true
+                end
+                if not first then x = x + spaceWidth end
+                widget:ClearAllPoints()
+                widget:SetPoint("TOPLEFT", content, "TOPLEFT", 8 + x, y)
+                if token.kind == "link" then widget:SetSize(tokenWidth, lineHeight - 4) end
+                x = x + tokenWidth
+                first = false
+            end
+            y = y - lineHeight - 4
+        end
+    end
+    if #conversation.messages == 0 then
+        local empty = poolRow(content, createChatLine)
+        empty.link = nil
+        empty.text:SetText("No saved messages yet. Send a whisper or wait for one.")
+        empty.text:SetTextColor(0.62, 0.62, 0.62)
+        empty:ClearAllPoints()
+        empty:SetPoint("TOPLEFT", 10, -12)
+        empty.text:SetWidth(width - 20)
+        empty:SetSize(width - 20, 20)
+        y = -45
+    end
+    poolFinish(content)
+    finishTokenPools(content)
+    content:SetSize(width, math.max(panel.chat:GetHeight(), -y + 8))
+    -- GetVerticalScrollRange() reflects the scroll frame's own recalculated
+    -- child rect; manually subtracting GetHeight() values could read stale
+    -- numbers from before the SetSize above took effect, which is why this
+    -- sometimes failed to reach the bottom after sending/receiving a message.
+    panel.chat:UpdateScrollChildRect()
+    panel.chat:SetVerticalScroll(panel.chat:GetVerticalScrollRange())
+end
+
+-- WoW addons can't touch the OS clipboard directly. The standard workaround
+-- (used by WeakAuras export strings etc.) is a focused, fully-selected edit
+-- box the player copies out themselves with Ctrl+C.
+function SW:ShowCopyPopup(title, content)
+    if not self.ui.copyFrame then
+        local frame = CreateFrame("Frame", "SaveWhispersCopyFrame", UIParent, BACKDROP)
+        frame:SetSize(520, 420)
+        frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+        -- Above DIALOG (same strata as the main window) so it reliably
+        -- shows in front instead of possibly landing behind it.
+        frame:SetFrameStrata("FULLSCREEN_DIALOG")
+        frame:SetMovable(true)
+        frame:EnableMouse(true)
+        frame:RegisterForDrag("LeftButton")
+        frame:SetBackdrop(DIALOG_BACKDROP)
+        frame:SetScript("OnDragStart", function(self) self:StartMoving() end)
+        frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+        frame.title = text(frame, "", "GameFontNormalLarge")
+        frame.title:SetPoint("TOPLEFT", 18, -16)
+        frame.close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
+        frame.close:SetPoint("TOPRIGHT", -4, -5)
+        frame.close:SetScript("OnClick", function() frame:Hide() end)
+        frame.hint = text(frame, "Ctrl+C to copy, then close this window.", "GameFontDisableSmall")
+        frame.hint:SetPoint("TOPLEFT", 18, -42)
+        local scrollFrame = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
+        scrollFrame:SetPoint("TOPLEFT", 16, -64)
+        scrollFrame:SetPoint("BOTTOMRIGHT", -32, 16)
+        local editBox = CreateFrame("EditBox", nil, scrollFrame)
+        editBox:SetMultiLine(true)
+        editBox:SetFontObject("ChatFontNormal")
+        editBox:SetAutoFocus(true)
+        editBox:SetWidth(450)
+        editBox:SetHeight(2000)
+        editBox:SetScript("OnEscapePressed", function() frame:Hide() end)
+        scrollFrame:SetScrollChild(editBox)
+        frame.editBox = editBox
+        self.ui.copyFrame = frame
+    end
+    local frame = self.ui.copyFrame
+    frame.title:SetText(title)
+    frame.editBox:SetText(content)
+    frame.editBox:HighlightText()
+    frame.editBox:SetFocus()
+    -- A single name doesn't need the full export-sized window.
+    if string.find(content, "\n") then
+        frame:SetSize(560, 440)
+    else
+        frame:SetSize(420, 130)
+    end
+    frame:Show()
+end
+
+function SW:CreateMembersFrame()
+    if self.ui.membersFrame then return self.ui.membersFrame end
+    local frame = CreateFrame("Frame", "SaveWhispersMembersFrame", UIParent, BACKDROP)
+    frame:SetSize(360, 440)
+    frame:SetPoint("CENTER", UIParent, "CENTER", 260, 10)
+    -- Above DIALOG (same strata as the main window) so it reliably shows in
+    -- front instead of possibly landing behind it, same issue as the copy
+    -- popup had.
+    frame:SetFrameStrata("FULLSCREEN_DIALOG")
+    frame:SetMovable(true)
+    frame:EnableMouse(true)
+    frame:RegisterForDrag("LeftButton")
+    frame:SetBackdrop(DIALOG_BACKDROP)
+    frame:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+    frame.title = text(frame, "Chat Members", "GameFontNormalLarge")
+    frame.title:SetPoint("TOPLEFT", 18, -16)
+    frame.close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
+    frame.close:SetPoint("TOPRIGHT", -4, -5)
+    frame.close:SetScript("OnClick", function() frame:Hide() end)
+    frame.scroll = scroll(frame)
+    frame.scroll:SetPoint("TOPLEFT", 16, -50)
+    frame.scroll:SetPoint("BOTTOMRIGHT", -30, 16)
+    frame:Hide()
+    self.ui.membersFrame = frame
+    return frame
+end
+
+local function createMemberRow(parent)
+    local row = CreateFrame("Frame", nil, parent)
+    row.label = text(row, "", "GameFontHighlightSmall")
+    row.label:SetPoint("LEFT", 8, 0)
+    return row
+end
+
+local function addMember(members, names, name, state)
+    name = SW:NormalizePlayerName(name)
+    if not name then return end
+    local key = string.lower(name)
+    if not members[key] then
+        members[key] = { name = name, state = state or "Offline" }
+        names[#names + 1] = members[key]
+    end
+end
+
+function SW:ShowMembers(conversation)
+    if not conversation or not conversation.system then return end
+    local frame = self:CreateMembersFrame()
+    local members, names = {}, {}
+    if conversation.channel == "guild" then
+        if GuildRoster then GuildRoster() end
+        local count = GetNumGuildMembers and GetNumGuildMembers() or 0
+        for index = 1, count do
+            local name, _, _, _, _, _, _, _, online = GetGuildRosterInfo(index)
+            addMember(members, names, name, online and "Online" or "Offline")
+        end
+    end
+    if conversation.channel == "party" or conversation.channel == "raid" then
+        for _, unit in ipairs({ "player", "party1", "party2", "party3", "party4" }) do
+            if UnitExists and UnitExists(unit) then
+                local unitName = UnitName and UnitName(unit)
+                local state = UnitIsConnected and UnitIsConnected(unit) and "Online" or "Offline"
+                if (UnitIsAFK and UnitIsAFK(unit)) or (UnitIsDND and UnitIsDND(unit)) then state = "Busy" end
+                addMember(members, names, unitName, state)
+            end
+        end
+        for index = 1, 40 do
+            local unit = "raid" .. index
+            if UnitExists and UnitExists(unit) then addMember(members, names, UnitName(unit), "Online") end
+        end
+    end
+    for _, message in ipairs(conversation.messages or {}) do addMember(members, names, message.sender, nil) end
+    table.sort(names, function(a, b) return string.lower(a.name) < string.lower(b.name) end)
+    -- Session conversations are named e.g. "Party Chat - 14.07.2026 15:52";
+    -- appending " Members (11)" to the full thing overflowed this narrow
+    -- window. Drop the " - <date>" part, the title bar doesn't need it.
+    local shortName = string.match(conversation.name, "^(.-) %- .+$") or conversation.name
+    frame.title:SetText(shortName .. " Members (" .. #names .. ")")
+    local content = frame.scroll.content
+    content.emptyLabel = content.emptyLabel or text(content, "", "GameFontDisableSmall")
+    poolStart(content)
+    local width = math.max(250, frame.scroll:GetWidth() - 4)
+    local y = 0
+    if #names == 0 then
+        content.emptyLabel:SetText("No members have been seen yet.")
+        content.emptyLabel:ClearAllPoints()
+        content.emptyLabel:SetPoint("TOPLEFT", 8, -8)
+        content.emptyLabel:Show()
+        y = -30
+    else
+        content.emptyLabel:Hide()
+    end
+    for _, member in ipairs(names) do
+        local row = poolRow(content, createMemberRow)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", 0, y)
+        row:SetSize(width, 28)
+        local stateColor = member.state == "Online" and { 0.20, 0.80, 0.38 } or (member.state == "Busy" and { 0.95, 0.75, 0.18 } or { 0.58, 0.60, 0.65 })
+        row.label:SetText(member.name .. "  (" .. member.state .. ")")
+        row.label:SetTextColor(unpack(stateColor))
+        y = y - 32
+    end
+    poolFinish(content)
+    content:SetSize(width, math.max(frame.scroll:GetHeight(), -y + 4))
+    frame:Show()
+end
+
+function SW:BuildWatchlistPanel()
+    local panel = self:NewPanel("Watchlist")
+    local heading = text(panel, "Watchlist", "GameFontNormalLarge")
+    heading:SetPoint("TOPLEFT", 4, -12)
+    local hint = text(panel, "Mark important players. Starred conversations are never removed automatically.", "GameFontDisableSmall")
+    hint:SetPoint("TOPLEFT", 4, -39)
+    panel.addName = edit(panel, 250, 22, "Enter player name", function(value) return SW:GetNameSuggestions(value) end)
+    panel.addName:SetPoint("TOPLEFT", 4, -68)
+    panel.addButton = button(panel, "Add player", 96, 24)
+    panel.addButton:SetPoint("LEFT", panel.addName, "RIGHT", 8, 0)
+    panel.addButton:SetScript("OnClick", function()
+        local ok, err = SW:AddToWatchlist(fieldValue(panel.addName))
+        if ok then panel.addName:SetText(panel.addName.hint) else SW:Print(err) end
+    end)
+    panel.list = scroll(panel)
+    panel.list:SetPoint("TOPLEFT", 4, -112)
+    panel.list:SetPoint("BOTTOMRIGHT", -18, 4)
+end
+
+-- Matches the icon-button style used in the chat header instead of the
+-- older plain "*"/"X" text buttons.
+local function createWatchlistRow(parent)
+    local row = CreateFrame("Frame", nil, parent)
+    row.favoriteIcon = row:CreateTexture(nil, "ARTWORK")
+    row.favoriteIcon:SetSize(13, 13)
+    row.favoriteIcon:SetPoint("LEFT", 12, 0)
+    row.favoriteIcon:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_1")
+    row.label = text(row, "", "GameFontHighlightSmall")
+    row.label:SetPoint("LEFT", row.favoriteIcon, "RIGHT", 6, 0)
+    row.realm = text(row, "", "GameFontDisableSmall")
+    row.realm:SetPoint("LEFT", row.label, "RIGHT", 6, 0)
+    row.delete = iconButton(row, "Interface\\TargetingFrame\\UI-RaidTargetingIcon_7", "Delete DM")
+    row.delete:SetPoint("RIGHT", -12, 0)
+    row.remove = iconButton(row, "Interface\\TargetingFrame\\UI-RaidTargetingIcon_1", "Remove from watchlist")
+    row.remove:SetPoint("RIGHT", row.delete, "LEFT", -4, 0)
+    row.open = fitButton(button(row, "Open chat", 10, 22))
+    row.open:SetPoint("RIGHT", row.remove, "LEFT", -8, 0)
+    return row
+end
+
+function SW:RefreshWatchlistPanel()
+    local panel = self.ui.panels.Watchlist
+    local list = self:GetSortedConversations(true)
+    local content = panel.list.content
+    content.emptyLabel = content.emptyLabel or text(content, "", "GameFontDisableSmall")
+    poolStart(content)
+    local width = math.max(450, panel.list:GetWidth() - 4)
+    local y = 0
+    if #list == 0 then
+        content.emptyLabel:SetText("Your watchlist is empty.")
+        content.emptyLabel:ClearAllPoints()
+        content.emptyLabel:SetPoint("TOPLEFT", 8, -8)
+        content.emptyLabel:Show()
+        y = -32
+    else
+        content.emptyLabel:Hide()
+    end
+    for _, conversation in ipairs(list) do
+        local row = poolRow(content, createWatchlistRow)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", 0, y); row:SetSize(width, 42)
+        local base, realm = splitRealm(conversation.name)
+        row.label:SetText(base)
+        row.realm:SetText(realm and ("(" .. realm .. ")") or "")
+        row.open:SetScript("OnClick", function() SW.ui.selectedKey = conversation.key; conversation.unread = 0; SW:SwitchTab("Messages") end)
+        row.remove:SetScript("OnClick", function() SW:ToggleFavorite(conversation.key) end)
+        row.delete:SetScript("OnClick", function() SW:DeleteConversation(conversation.key) end)
+        y = y - 48
+    end
+    poolFinish(content)
+    content:SetSize(width, math.max(panel.list:GetHeight(), -y + 5))
+end
+
+function SW:BuildSettingsPanel()
+    local panel = self:NewPanel("Settings")
+    panel.scroll = scroll(panel)
+    -- The scrollbar renders to the right of the scroll frame's own edge, not
+    -- inside it - SetAllPoints() let it hang off the window's right border.
+    panel.scroll:SetPoint("TOPLEFT", 0, 0)
+    panel.scroll:SetPoint("BOTTOMRIGHT", -26, 0)
+    local content = panel.scroll.content
+    content:SetSize(800, 398)
+    panel.content = content
+    local heading = text(content, "Settings", "GameFontNormalLarge")
+    heading:SetPoint("TOPLEFT", 4, -12)
+    panel.enabled = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
+    panel.enabled:SetPoint("TOPLEFT", 2, -50)
+    panel.enabled.label = text(content, "Enable SaveWhispers", "GameFontHighlightSmall")
+    panel.enabled.label:SetPoint("LEFT", panel.enabled, "RIGHT", 2, 0)
+    panel.enabled:SetScript("OnClick", function(self) SW:SetSetting("enabled", self:GetChecked() and true or false) end)
+    panel.minimap = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
+    panel.minimap:SetPoint("TOPLEFT", 2, -78)
+    panel.minimap.label = text(content, "Show minimap button", "GameFontHighlightSmall")
+    panel.minimap.label:SetPoint("LEFT", panel.minimap, "RIGHT", 2, 0)
+    panel.minimap:SetScript("OnClick", function(self) SW:SetSetting("showMinimap", self:GetChecked() and true or false) end)
+    panel.sortByActivity = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
+    panel.sortByActivity:SetPoint("TOPLEFT", 2, -106)
+    panel.sortByActivity.label = text(content, "Sort chats by recent activity (unchecked: alphabetical)", "GameFontHighlightSmall")
+    panel.sortByActivity.label:SetPoint("LEFT", panel.sortByActivity, "RIGHT", 2, 0)
+    panel.sortByActivity:SetScript("OnClick", function(self) SW:SetSetting("sortByActivity", self:GetChecked() and true or false) end)
+
+    local limitsHeading = text(content, "Limits", "GameFontNormal")
+    limitsHeading:SetPoint("TOPLEFT", 4, -140)
+    local limitsHint = text(content, "The oldest entry is dropped once a limit is reached.", "GameFontDisableSmall")
+    limitsHint:SetPoint("TOPLEFT", 4, -162)
+
+    local function addLimitField(id, setting, label, offset, minimum, default)
+        local caption = text(content, label, "GameFontHighlightSmall")
+        caption:SetPoint("TOPLEFT", 12, offset)
+        local field = numberField(content, 70, 20)
+        field:SetPoint("LEFT", caption, "RIGHT", 10, 0)
+        local function apply()
+            local value = tonumber(field:GetText())
+            if not value or value < minimum then value = SW.DB.settings[setting] or default end
+            value = math.floor(value)
+            SW.DB.settings[setting] = value
+            field:ClearFocus()
+            SW:RefreshSettingsPanel()
+        end
+        field:SetScript("OnEnterPressed", apply)
+        field:SetScript("OnEditFocusLost", apply)
+        panel["field" .. id] = field
+        panel.limitFields[#panel.limitFields + 1] = { field = field, setting = setting, minimum = minimum, default = default }
+    end
+    panel.limitFields = {}
+    addLimitField("DMLimit", "maxConversations", "DM conversations to keep", -160, 10, 200)
+    addLimitField("GroupLimit", "maxGroupMessages", "Messages to keep per Guild/Party/channel", -186, 50, 1500)
+    addLimitField("SessionLimit", "maxGroupSessions", "Party/Raid chat sessions to keep", -212, 10, 200)
+    panel.limitWarning = text(content, "", "GameFontDisableSmall", 0.95, 0.75, 0.18)
+    panel.limitWarning:SetPoint("TOPLEFT", 12, -236)
+
+    panel.sliders = {}
+    local function addSlider(id, setting, channel, label, offset, minimum, maximum, step)
+        local slider = CreateFrame("Slider", "SaveWhispers" .. id, content, "OptionsSliderTemplate")
+        slider:SetPoint("TOPLEFT", 12, offset)
+        slider:SetWidth(250); slider:SetHeight(18)
+        slider:SetMinMaxValues(minimum or 0, maximum or 1); slider:SetValueStep(step or 0.05)
+        if slider.SetObeyStepOnDrag then slider:SetObeyStepOnDrag(true) end
+        slider.label = text(content, label, "GameFontHighlightSmall")
+        slider.label:SetPoint("BOTTOMLEFT", slider, "TOPLEFT", -7, 3)
+        slider:SetScript("OnValueChanged", function(self, value)
+            if panel.loading then return end
+            if channel then SW.DB.settings[setting][channel] = value else SW.DB.settings[setting] = value end
+            SW:NotifyDataChanged()
+        end)
+        panel.sliders[#panel.sliders + 1] = { slider = slider, setting = setting, channel = channel }
+    end
+    addSlider("UIScale", "uiScale", nil, "Interface scale", -272, 0.75, 1.35, 0.05)
+    addSlider("ChatScale", "chatScale", nil, "Chat text scale", -318, 0.80, 1.35, 0.05)
+end
+
+function SW:RefreshSettingsPanel()
+    local panel = self.ui.panels.Settings
+    panel.loading = true
+    panel.enabled:SetChecked(self.DB.settings.enabled and true or false)
+    panel.minimap:SetChecked(self.DB.settings.showMinimap and true or false)
+    panel.sortByActivity:SetChecked(self.DB.settings.sortByActivity and true or false)
+    for _, entry in ipairs(panel.sliders) do
+        local value = entry.channel and self.DB.settings[entry.setting][entry.channel] or self.DB.settings[entry.setting]
+        entry.slider:SetValue(value or 0)
+    end
+    local overLimit = false
+    for _, entry in ipairs(panel.limitFields or {}) do
+        local value = tonumber(self.DB.settings[entry.setting]) or entry.default
+        if not entry.field:HasFocus() then entry.field:SetText(tostring(value)) end
+        if value > 1500 then overLimit = true end
+    end
+    panel.limitWarning:SetText(overLimit and "Values above 1500 can slow down login/reload (larger saved file)." or "")
+    panel.loading = false
+end
+
+local CHANGELOG = {
+    {
+        version = "V1.1",
+        coAuthor = "Gabbajoe",
+        entries = {
+            "Native Blizzard window look (parchment/gold), pixel-perfect resizing and dragging.",
+            "Raid Chat support, and Party/Raid history split into per-session conversations with a captured member list; switching between party and raid mid-session relabels it in place with a note instead of splitting the log.",
+            "Clickable, tooltip-enabled, correctly colored item and quest links in saved messages - including quest references posted by Questie.",
+            "Timestamps and Today/Yesterday day separators on every message; class-colored sender names; Guild Chat shows your guild name.",
+            "Export chat and Copy name popups (Guild/Party/Raid/Channel chat is read-only, so those windows no longer show a message box).",
+            "Combined suggestion-dropdown + Tab-complete for player/channel name fields.",
+            "Configurable limits for saved DMs, group chat messages and kept Party/Raid sessions.",
+            "Choice of sorting conversations alphabetically or by most recent activity, within Guild/Party/Raid and within DMs.",
+            "Fixed: window always staying on top of other Blizzard windows; a crash from unbounded frame growth; duplicate empty DM conversations from adding a name without its realm.",
+            "Fixed: pinning/unpinning Guild/Party/Raid chat could jump it below DMs in the list.",
+            "Fixed: deleting a DM always jumped selection to Guild Chat instead of the conversation next to it.",
+            "Fixed: a stray leading space in Party/Raid session subtitles like \"( 14.07.2026 15:52)\".",
+            "Fixed: a message box left focused could keep eating keystrokes (e.g. WASD) after closing the window or switching tabs.",
+        },
+    },
+    {
+        version = "V1.0",
+        entries = {
+            "Persistent private, Guild, Party and selected channel histories.",
+            "Chat colors, pins, member windows and a movable minimap button.",
+            "Resizable SaveWhispers window.",
+        },
+    },
+}
+
+local function changelogRow(parent)
+    return parent:CreateFontString(nil, "OVERLAY")
+end
+
+function SW:BuildChangelogPanel()
+    local panel = self:NewPanel("Changelog")
+    local heading = text(panel, "Changelog", "GameFontNormalLarge")
+    heading:SetPoint("TOPLEFT", 4, -12)
+    panel.list = scroll(panel)
+    panel.list:SetPoint("TOPLEFT", 4, -44)
+    panel.list:SetPoint("BOTTOMRIGHT", -22, 4)
+end
+
+-- Each version gets its own heading line (not buried mid-paragraph) with
+-- its bullets indented as sub-items below it, and the wrap width is read
+-- from the scroll frame's actual current size instead of a hardcoded pixel
+-- value - a fixed width overflowed past the window's edge whenever the
+-- window was resized narrower than that constant.
+function SW:RefreshChangelogPanel()
+    local panel = self.ui.panels.Changelog
+    if not panel then return end
+    local content = panel.list.content
+    poolStart(content)
+    local width = math.max(300, panel.list:GetWidth() - 8)
+    local y = 0
+    for _, entry in ipairs(CHANGELOG) do
+        local versionLabel = entry.version .. (entry.coAuthor and (" (Co-Author: " .. entry.coAuthor .. ")") or "")
+        local header = poolRow(content, changelogRow)
+        header:SetFontObject("GameFontNormal")
+        header:SetTextColor(1, 0.82, 0)
+        header:SetJustifyH("LEFT")
+        header:SetText(versionLabel)
+        header:ClearAllPoints()
+        header:SetPoint("TOPLEFT", content, "TOPLEFT", 4, y)
+        header:SetWidth(width)
+        y = y - header:GetStringHeight() - 8
+        for _, line in ipairs(entry.entries) do
+            local bullet = poolRow(content, changelogRow)
+            bullet:SetFontObject("GameFontHighlightSmall")
+            bullet:SetTextColor(0.85, 0.85, 0.85)
+            bullet:SetJustifyH("LEFT")
+            bullet:SetJustifyV("TOP")
+            if bullet.SetWordWrap then bullet:SetWordWrap(true) end
+            bullet:SetText("- " .. line)
+            bullet:ClearAllPoints()
+            bullet:SetPoint("TOPLEFT", content, "TOPLEFT", 14, y)
+            bullet:SetWidth(width - 14)
+            y = y - bullet:GetStringHeight() - 4
+        end
+        y = y - 14
+    end
+    content:SetSize(width, math.max(panel.list:GetHeight(), -y + 4))
+    poolFinish(content)
+end
+
+function SW:RefreshUI()
+    if not self.ui or not self.ui.frame then return end
+    -- Skip the (expensive) panel rebuild while the window is closed; it runs
+    -- again from ToggleMainFrame/SwitchTab once the window is shown, so
+    -- nothing is lost, but background chat spam no longer rebuilds hidden UI.
+    if not self.ui.frame:IsShown() then return end
+    self.ui.frame:SetScale(self.DB.settings.uiScale or 1)
+    local active = self.ui.activeTab
+    if active == "Messages" then self:RefreshMessagesPanel()
+    elseif active == "Watchlist" then self:RefreshWatchlistPanel()
+    elseif active == "Settings" then self:RefreshSettingsPanel()
+    elseif active == "Changelog" then self:RefreshChangelogPanel()
+    end
+end
