@@ -1969,6 +1969,7 @@ local CHANGELOG = {
             "Minimap button now has a gold border ring like every other addon's minimap icon, and shows a small unread-count badge.",
             "Fixed: the minimap icon was off-center inside its new border ring, and its mouseover highlight used a cross/starburst texture meant for zoom buttons.",
             "Minimap unread badge moved to the bottom-left corner and changed from a flat red square to a round indicator dot.",
+            "Fixed: the minimap unread badge stayed showing a stale count after opening/clearing a conversation in the window, instead of updating right away.",
             "Fixed: on the flat UI Styles, every checkbox in Settings silently did nothing when clicked (same missing click-registration issue as the earlier button fix) - most noticeably, there was no way to re-enable a hidden minimap button from Settings.",
         },
     },
@@ -2044,6 +2045,12 @@ end
 
 function SW:RefreshUI()
     if not self.ui or not self.ui.frame then return end
+    -- Opening/selecting a conversation clears its unread count directly
+    -- and calls RefreshUI (or SwitchTab, which calls it) rather than
+    -- NotifyDataChanged - the minimap badge needs updating here too, or it
+    -- keeps showing a stale count until something else happens to trigger
+    -- NotifyDataChanged.
+    if self.UpdateMinimapBadge then self:UpdateMinimapBadge() end
     -- Skip the (expensive) panel rebuild while the window is closed; it runs
     -- again from ToggleMainFrame/SwitchTab once the window is shown, so
     -- nothing is lost, but background chat spam no longer rebuilds hidden UI.
