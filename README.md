@@ -47,6 +47,7 @@ Open it with `/sw` or the movable minimap button.
 - Fixed: deleting a DM always jumped selection to Guild Chat instead of the conversation next to it.
 - Fixed: a stray leading space in Party/Raid session subtitles like "( 14.07.2026 15:52)".
 - Fixed: a message box left focused could keep eating keystrokes (e.g. WASD) after closing the window or switching tabs.
+- Fixed: opening a busy Guild/Party/Raid chat could stutter - only the most recent messages are rendered now, and an existing conversation that was already over its message limit is trimmed back down immediately instead of over hundreds of new messages.
 
 ### V1.0 (Author: Femboybaddie)
 
