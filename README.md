@@ -23,7 +23,7 @@ Open it with `/sw` or the movable minimap button.
 - Conversations sort alphabetically by default, or by most recent activity if you turn that on in Settings — either way, Guild/Party/Raid/channel chat always stays above your DMs.
 - Filter pills (All / DMs / Guild / Group) above the conversation list to quickly narrow it down instead of scrolling through everything mixed together.
 - Settings > Danger Zone: delete all DMs, Guild Chat history, all Party/Raid sessions, or everything at once, each behind a confirmation popup.
-- Settings > UI Style: WoW Classic (default), an ElvUI-inspired flat theme, or Modern SaveWhispers — takes effect after a UI reload.
+- Settings > UI Style: WoW Classic (default), an ElvUI-inspired flat theme, Modern SaveWhispers, or a Dragonflight-inspired theme — takes effect after a UI reload.
 - Select DMs mode to delete multiple conversations at once, or cancel the selection.
 - "Copy name" and "Export chat" popups with pre-selected text (WoW addons can't write to the OS clipboard directly, so these give you selectable text to Ctrl+C).
 - Combined suggestion dropdown + Tab-complete when typing a player or channel name.
@@ -53,7 +53,9 @@ Open it with `/sw` or the movable minimap button.
 - Fixed: opening a busy Guild/Party/Raid chat could stutter - only the most recent messages are rendered now, and an existing conversation that was already over its message limit is trimmed back down immediately instead of over hundreds of new messages.
 - Conversation list filter pills (All / DMs / Guild / Group) to untangle Guild Chat and Party/Raid sessions from the DM list.
 - Settings > Danger Zone: buttons to delete all DMs, Guild Chat history, all Party/Raid sessions, or everything at once - each behind a confirmation popup.
-- Settings > UI Style: choose between WoW Classic (default), an ElvUI-inspired flat theme, or a new Modern SaveWhispers theme (applies after a UI reload).
+- Settings > UI Style: choose between WoW Classic (default), an ElvUI-inspired flat theme, a Modern SaveWhispers theme, or a Dragonflight-inspired theme (applies after a UI reload).
+- The close button and scrollbars are now themed too on the flat UI Styles, instead of staying the default Blizzard look.
+- A book icon next to the Changelog tab's heading.
 
 ### V1.0 (Author: Femboybaddie)
 

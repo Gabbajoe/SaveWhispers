@@ -19,13 +19,15 @@ local DIALOG_BACKDROP = {
     insets = { left = 11, right = 12, top = 12, bottom = 11 },
 }
 
--- Three selectable looks (Settings > UI Style). "classic" keeps every
+-- Four selectable looks (Settings > UI Style). "classic" keeps every
 -- Blizzard template as-is (DIALOG_BACKDROP, UIPanelButtonTemplate,
 -- InsetFrameTemplate, InputBoxTemplate - unchanged from before this
--- existed). "elvui"/"modern" are custom flat themes inspired by those
--- aesthetics, built from plain WHITE8X8 backdrops rather than real
--- integration with the actual ElvUI addon's skin API (that only works if
--- ElvUI itself is installed, and is a much larger, separate feature).
+-- existed). "elvui"/"modern"/"dragonflight" are custom flat themes
+-- inspired by those aesthetics, built from plain WHITE8X8 backdrops rather
+-- than real integration with the actual ElvUI addon's skin API (that only
+-- works if ElvUI itself is installed) or real Dragonflight art (which
+-- isn't guaranteed to exist in the Classic Era client's data files) - both
+-- are a much larger, separate undertaking than a same-layout re-skin.
 -- A theme change only takes effect after /reload, since Blizzard templates
 -- are chosen once at CreateFrame time and can't be swapped on an
 -- already-built widget - see the "Reload UI" button in Settings.
@@ -67,6 +69,22 @@ local THEMES = {
         textColor = { 0.92, 0.92, 0.94 },
         mutedColor = { 0.58, 0.58, 0.62 },
     },
+    dragonflight = {
+        useNativeWidgets = false,
+        -- Deep teal-blue with warm gold trim, evoking Dragonflight's
+        -- expedition/dracthyr palette instead of Classic's parchment.
+        windowBackdropColor = { 0.055, 0.095, 0.125, 0.98 },
+        windowBorderColor = { 0.78, 0.62, 0.32, 1 },
+        insetBackdropColor = { 0.08, 0.12, 0.16, 0.9 },
+        insetBorderColor = { 0.78, 0.62, 0.32, 0.55 },
+        buttonColor = { 0.09, 0.14, 0.18, 1 },
+        buttonBorderColor = { 0.78, 0.62, 0.32, 0.55 },
+        editBackdropColor = { 0.08, 0.12, 0.16, 1 },
+        editBorderColor = { 0.78, 0.62, 0.32, 0.55 },
+        accentColor = { 0.78, 0.62, 0.32, 0.45 },
+        textColor = { 0.93, 0.93, 0.90 },
+        mutedColor = { 0.60, 0.62, 0.58 },
+    },
 }
 
 local function currentTheme()
@@ -84,6 +102,32 @@ local function applyWindowBackdrop(frame, theme)
         frame:SetBackdropColor(unpack(theme.windowBackdropColor))
         frame:SetBackdropBorderColor(unpack(theme.windowBorderColor))
     end
+end
+
+-- "classic" keeps Blizzard's own red round "X" (UIPanelCloseButton); the
+-- flat themes get a small themed square button instead, so the close
+-- button doesn't stick out as the one unstyled native element.
+local function closeButton(parent, name)
+    local theme = currentTheme()
+    if theme.useNativeWidgets then
+        return CreateFrame("Button", name, parent, "UIPanelCloseButton")
+    end
+    local control = CreateFrame("Button", name, parent, BACKDROP)
+    control:SetSize(24, 24)
+    control:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+    control:SetBackdropColor(unpack(theme.buttonColor))
+    control:SetBackdropBorderColor(unpack(theme.buttonBorderColor))
+    control:RegisterForClicks("LeftButtonUp", "LeftButtonDown")
+    local label = control:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    label:SetPoint("CENTER", 0, 0)
+    label:SetText("x")
+    label:SetTextColor(unpack(theme.textColor))
+    local highlight = control:CreateTexture(nil, "HIGHLIGHT")
+    highlight:SetAllPoints()
+    highlight:SetColorTexture(theme.accentColor[1], theme.accentColor[2], theme.accentColor[3], theme.accentColor[4] or 0.35)
+    highlight:SetBlendMode("ADD")
+    control:SetHighlightTexture(highlight)
+    return control
 end
 
 local function text(parent, value, fontObject, r, g, b)
@@ -509,12 +553,40 @@ local function poolFinish(content)
     end
 end
 
+-- Each scroll frame needs a real (unique, if only for internal lookup)
+-- name so its template-created "$parentScrollBar" children resolve to
+-- discoverable globals - otherwise there's no way to reach the scrollbar
+-- at all to theme it.
+local scrollFrameCounter = 0
+
 local function scroll(parent)
-    local frame = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
+    scrollFrameCounter = scrollFrameCounter + 1
+    local name = "SaveWhispersScroll" .. scrollFrameCounter
+    local frame = CreateFrame("ScrollFrame", name, parent, "UIPanelScrollFrameTemplate")
     local content = CreateFrame("Frame", nil, frame)
     content:SetSize(1, 1)
     frame:SetScrollChild(content)
     frame.content = content
+    local theme = currentTheme()
+    if not theme.useNativeWidgets then
+        local scrollBar = _G[name .. "ScrollBar"]
+        if scrollBar then
+            local thumb = scrollBar:GetThumbTexture()
+            if thumb then
+                thumb:SetColorTexture(theme.buttonBorderColor[1], theme.buttonBorderColor[2], theme.buttonBorderColor[3], 1)
+                thumb:SetWidth(10)
+            end
+            for _, buttonName in ipairs({ "ScrollUpButton", "ScrollDownButton" }) do
+                local scrollButton = _G[name .. "ScrollBar" .. buttonName]
+                if scrollButton then
+                    for _, getter in ipairs({ "GetNormalTexture", "GetPushedTexture", "GetDisabledTexture", "GetHighlightTexture" }) do
+                        local layer = scrollButton[getter] and scrollButton[getter](scrollButton)
+                        if layer then layer:SetVertexColor(theme.buttonBorderColor[1], theme.buttonBorderColor[2], theme.buttonBorderColor[3]) end
+                    end
+                end
+            end
+        end
+    end
     return frame
 end
 
@@ -598,7 +670,7 @@ function SW:CreateUI()
         SW:RefreshUI()
     end)
 
-    local close = CreateFrame("Button", "SaveWhispersFrameCloseButton", frame, "UIPanelCloseButton")
+    local close = closeButton(frame, "SaveWhispersFrameCloseButton")
     close:SetPoint("TOPRIGHT", -6, -7)
     close:SetScript("OnClick", function() SW:ToggleMainFrame(false) end)
     -- Belt-and-suspenders: whatever hides this frame, an EditBox inside it
@@ -1346,7 +1418,7 @@ function SW:ShowCopyPopup(title, content)
         frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
         frame.title = text(frame, "", "GameFontNormalLarge")
         frame.title:SetPoint("TOPLEFT", 18, -16)
-        frame.close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
+        frame.close = closeButton(frame)
         frame.close:SetPoint("TOPRIGHT", -4, -5)
         frame.close:SetScript("OnClick", function() frame:Hide() end)
         frame.hint = text(frame, "Ctrl+C to copy, then close this window.", "GameFontDisableSmall")
@@ -1396,7 +1468,7 @@ function SW:CreateMembersFrame()
     frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
     frame.title = text(frame, "Chat Members", "GameFontNormalLarge")
     frame.title:SetPoint("TOPLEFT", 18, -16)
-    frame.close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
+    frame.close = closeButton(frame)
     frame.close:SetPoint("TOPRIGHT", -4, -5)
     frame.close:SetScript("OnClick", function() frame:Hide() end)
     frame.scroll = scroll(frame)
@@ -1698,8 +1770,10 @@ function SW:BuildSettingsPanel()
     panel.themeElvui:SetPoint("LEFT", panel.themeClassic, "RIGHT", 6, 0)
     panel.themeModern = themePill("modern", "Modern SaveWhispers")
     panel.themeModern:SetPoint("LEFT", panel.themeElvui, "RIGHT", 6, 0)
+    panel.themeDragonflight = themePill("dragonflight", "Dragonflight")
+    panel.themeDragonflight:SetPoint("LEFT", panel.themeModern, "RIGHT", 6, 0)
     panel.reloadUI = fitButton(button(content, "Reload UI", 10, 22))
-    panel.reloadUI:SetPoint("LEFT", panel.themeModern, "RIGHT", 16, 0)
+    panel.reloadUI:SetPoint("LEFT", panel.themeDragonflight, "RIGHT", 16, 0)
     panel.reloadUI:SetScript("OnClick", function() ReloadUI() end)
 
     local dangerHeading = text(content, "Danger Zone", "GameFontNormal", 0.9, 0.3, 0.3)
@@ -1740,10 +1814,10 @@ function SW:RefreshSettingsPanel()
     end
     panel.limitWarning:SetText(overLimit and "Values above 1500 can slow down login/reload (larger saved file)." or "")
     local currentTheme = self.DB.settings.uiTheme or "classic"
-    for _, pill in ipairs({ panel.themeClassic, panel.themeElvui, panel.themeModern }) do
+    for _, pill in ipairs({ panel.themeClassic, panel.themeElvui, panel.themeModern, panel.themeDragonflight }) do
         pill:UnlockHighlight()
     end
-    local activeThemePill = ({ classic = panel.themeClassic, elvui = panel.themeElvui, modern = panel.themeModern })[currentTheme]
+    local activeThemePill = ({ classic = panel.themeClassic, elvui = panel.themeElvui, modern = panel.themeModern, dragonflight = panel.themeDragonflight })[currentTheme]
     if activeThemePill then activeThemePill:LockHighlight() end
     panel.reloadUI:SetShown(currentTheme ~= self.ui.appliedTheme)
     panel.loading = false
@@ -1770,7 +1844,9 @@ local CHANGELOG = {
             "Fixed: opening a busy Guild/Party/Raid chat could stutter - only the most recent messages are rendered now, and an existing conversation that was already over its message limit is trimmed back down immediately instead of over hundreds of new messages.",
             "Conversation list filter pills (All / DMs / Guild / Group) to untangle Guild Chat and Party/Raid sessions from the DM list.",
             "Settings > Danger Zone: buttons to delete all DMs, Guild Chat history, all Party/Raid sessions, or everything at once - each behind a confirmation popup.",
-            "Settings > UI Style: choose between WoW Classic (default), an ElvUI-inspired flat theme, or a new Modern SaveWhispers theme (applies after a UI reload).",
+            "Settings > UI Style: choose between WoW Classic (default), an ElvUI-inspired flat theme, a Modern SaveWhispers theme, or a Dragonflight-inspired theme (applies after a UI reload).",
+            "The close button and scrollbars are now themed too on the flat UI Styles, instead of staying the default Blizzard look.",
+            "A book icon next to the Changelog tab's heading.",
         },
     },
     {
@@ -1790,8 +1866,12 @@ end
 
 function SW:BuildChangelogPanel()
     local panel = self:NewPanel("Changelog")
+    local icon = panel:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(24, 24)
+    icon:SetPoint("TOPLEFT", 2, -10)
+    icon:SetTexture("Interface\\Icons\\INV_Misc_Book_09")
     local heading = text(panel, "Changelog", "GameFontNormalLarge")
-    heading:SetPoint("TOPLEFT", 4, -12)
+    heading:SetPoint("LEFT", icon, "RIGHT", 6, 1)
     panel.list = scroll(panel)
     panel.list:SetPoint("TOPLEFT", 4, -44)
     panel.list:SetPoint("BOTTOMRIGHT", -22, 4)
