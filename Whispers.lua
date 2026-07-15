@@ -21,8 +21,14 @@ end
 local function appendMessage(conversation, message, cap)
     local messages = conversation.messages
     messages[#messages + 1] = message
-    if cap and #messages > cap then
-        table.remove(messages, 1)
+    -- A loop, not a single trim: if the cap was only just lowered (or a
+    -- conversation grew past it before this limit existed), a single
+    -- table.remove only ever peels off one message per incoming message,
+    -- so it can take hundreds of new messages to actually shrink back down.
+    if cap then
+        while #messages > cap do
+            table.remove(messages, 1)
+        end
     end
 end
 

@@ -2,6 +2,13 @@ local SW = _G.SaveWhispers
 local BACKDROP = SW.BackdropTemplate
 local ICON = "Interface\\AddOns\\SaveWhispers\\assets\\savewhispers_icon"
 
+-- How many of a conversation's most recent messages actually get rendered
+-- as widgets per refresh. Stored history can be far larger (up to
+-- maxGroupMessages, e.g. 1500 for a busy Guild Chat) - rendering all of it
+-- every time is what caused the window-open stutter. Full history is still
+-- available in full via "Export chat".
+local MAX_RENDERED_MESSAGES = 200
+
 -- The classic parchment/gold "dialog box" look used by StaticPopup and most
 -- native Blizzard windows. Using the real art (instead of a hand-rolled
 -- flat-color backdrop) is what makes the addon look like part of the game.
@@ -1014,7 +1021,16 @@ function SW:RefreshChatPanel()
     local todayKey = date("%Y-%m-%d")
     local yesterdayKey = date("%Y-%m-%d", time() - 86400)
     local lastDayKey = nil
-    for _, message in ipairs(conversation.messages or {}) do
+    local allMessages = conversation.messages or {}
+    -- Rendering builds several word/link widgets per message (see
+    -- tokenizeMessage above) - doing that for the entire stored history
+    -- (up to maxGroupMessages, e.g. 1500 in a busy Guild Chat) on every
+    -- single refresh is what caused the noticeable stutter opening the
+    -- window. The full history is still there for Export chat; only the
+    -- rendered window is capped.
+    local renderStart = math.max(1, #allMessages - MAX_RENDERED_MESSAGES + 1)
+    for index = renderStart, #allMessages do
+        local message = allMessages[index]
         local dayKey = date("%Y-%m-%d", message.timestamp or 0)
         if dayKey ~= lastDayKey then
             local label

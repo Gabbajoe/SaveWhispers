@@ -115,6 +115,21 @@ function SW:InitDatabase()
             end
         end
     end
+
+    -- A Guild/Party/Raid/channel conversation that grew past the current
+    -- maxGroupMessages limit (e.g. from before the limit existed, or after
+    -- lowering it in Settings) would otherwise only shrink by one message
+    -- per new incoming message - taking potentially hundreds of messages to
+    -- actually catch up, all the while making every window refresh render
+    -- (and re-render on each new message) far more than it needs to.
+    local groupLimit = math.max(50, math.floor(tonumber(self.DB.settings.maxGroupMessages) or 1500))
+    for _, conversation in pairs(self.DB.groupChats) do
+        if type(conversation) == "table" and type(conversation.messages) == "table" then
+            while #conversation.messages > groupLimit do
+                table.remove(conversation.messages, 1)
+            end
+        end
+    end
 end
 
 function SW:SetSetting(key, value)
