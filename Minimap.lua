@@ -106,7 +106,7 @@ function SW:UpdateMinimapBadge()
     if not button then return end
     if not button.badge then
         button.badge = CreateFrame("Frame", nil, button)
-        button.badge:SetSize(16, 16)
+        button.badge:SetSize(18, 18)
         -- Bottom-left (roughly 8 o'clock), like most addons' minimap
         -- count badges - was top-right, and a flat-color square instead of
         -- a proper round badge.
@@ -115,8 +115,14 @@ function SW:UpdateMinimapBadge()
         button.badge.bg:SetAllPoints()
         button.badge.bg:SetTexture("Interface\\COMMON\\Indicator-Red")
         button.badge.text = button.badge:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        button.badge.text:SetPoint("CENTER", 0, 0)
-        if button.badge.text.SetTextHeight then button.badge.text:SetTextHeight(10) end
+        -- A plain CENTER anchor reads slightly high (font metrics assume
+        -- room for a descender that a 1-3 digit number never uses) - a
+        -- small downward nudge optically centers it in the round badge.
+        button.badge.text:SetPoint("CENTER", 0, -0.5)
+        button.badge.text:SetJustifyH("CENTER")
+        button.badge.text:SetJustifyV("MIDDLE")
+        button.badge.text:SetTextColor(1, 1, 1)
+        if button.badge.text.SetTextHeight then button.badge.text:SetTextHeight(11) end
     end
     local total = 0
     for _, conversation in pairs(self.DB.conversations or {}) do
