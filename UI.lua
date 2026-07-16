@@ -543,11 +543,20 @@ end
 -- size computation goes haywire (reported: window jumps to full screen size
 -- and behaves erratically on resize). Re-anchoring to a known TOPLEFT point
 -- after every move keeps StartSizing's assumption valid.
+-- The `* scale / parentScale` conversion this used to have is only correct
+-- when REPARENTING to a frame with a different scale ancestry than before -
+-- it's the standard idiom for that, but this frame is already a direct
+-- child of UIParent both before and after this call (only the anchor POINT
+-- changes, not the parent), so frame:GetLeft()/GetTop() are already exactly
+-- the offsets UIParent's BOTTOMLEFT needs, with no conversion. Since
+-- scale/parentScale reduces to frame:GetScale() (the frame's own uiScale
+-- setting) here, the old formula silently multiplied the offset by uiScale
+-- - invisible at the default uiScale=1 (factor of 1, a no-op), but at any
+-- other Interface Scale it shrank the offset toward UIParent's corner,
+-- making the window land far short of wherever it was actually dropped.
 local function normalizeTopLeft(frame)
-    local scale = frame:GetEffectiveScale()
-    local parentScale = UIParent:GetEffectiveScale()
-    local x = frame:GetLeft() * scale / parentScale
-    local y = frame:GetTop() * scale / parentScale
+    local x = frame:GetLeft()
+    local y = frame:GetTop()
     frame:ClearAllPoints()
     setPixelPoint(frame, "TOPLEFT", UIParent, "BOTTOMLEFT", x, y)
     return x, y
@@ -2007,6 +2016,11 @@ function SW:BuildSettingsPanel()
         end
         slider.label = text(content, label, "GameFontHighlightSmall")
         slider.label:SetPoint("BOTTOMLEFT", slider, "TOPLEFT", -7, 3)
+        slider.valueText = text(content, "", "GameFontHighlightSmall")
+        slider.valueText:SetPoint("LEFT", slider.label, "RIGHT", 6, 0)
+        local function updateValueText(value)
+            slider.valueText:SetText(math.floor((value or 0) * 100 + 0.5) .. "%")
+        end
         -- Only write the value while dragging - applying it live (uiScale
         -- calls self.ui.frame:SetScale, which changes the effective scale
         -- of the very frame this slider lives in, and NotifyDataChanged's
@@ -2015,6 +2029,7 @@ function SW:BuildSettingsPanel()
         -- still down - the frame visibly "sprang" back and forth. Applying
         -- (SetScale/refresh) only happens once, on release.
         slider:SetScript("OnValueChanged", function(self, value)
+            updateValueText(value)
             if panel.loading then return end
             if channel then SW.DB.settings[setting][channel] = value else SW.DB.settings[setting] = value end
         end)
@@ -2022,6 +2037,30 @@ function SW:BuildSettingsPanel()
             if panel.loading then return end
             SW:NotifyDataChanged()
         end)
+        -- A visible tick at 100% (unscaled/normal), on a bare Low/High
+        -- track with no reference point it's easy to drag past without
+        -- noticing, and once past it there's no way back to exactly 100%
+        -- except luck - clicking the tick snaps straight back to it.
+        local trackWidth = 250
+        local tickFraction = (1 - (minimum or 0)) / ((maximum or 1) - (minimum or 0))
+        local tick = slider:CreateTexture(nil, "OVERLAY")
+        tick:SetColorTexture(1, 0.82, 0, 0.9)
+        tick:SetSize(2, 14)
+        tick:SetPoint("CENTER", slider, "LEFT", trackWidth * tickFraction, 0)
+        local tickButton = CreateFrame("Button", nil, slider)
+        tickButton:SetSize(10, 18)
+        tickButton:SetPoint("CENTER", tick, "CENTER", 0, 0)
+        tickButton:RegisterForClicks("LeftButtonUp")
+        tickButton:SetScript("OnClick", function()
+            slider:SetValue(1)
+            SW:NotifyDataChanged()
+        end)
+        tickButton:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:SetText("Click to reset to 100%")
+            GameTooltip:Show()
+        end)
+        tickButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
         panel.sliders[#panel.sliders + 1] = { slider = slider, setting = setting, channel = channel }
     end
     addSlider("UIScale", "uiScale", nil, "Interface scale", 0.75, 1.35, 0.05)
