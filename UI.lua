@@ -1091,7 +1091,7 @@ function SW:RefreshMessagesPanel()
         -- these" category - there's no limit to show a count against.
         counterText = "Guild Chat"
     else
-        counterText = string.format("DM %d/%d   G/R %d/%d   Chan %d/%d", dmCount, dmMax, groupCount, groupMax, channelCount, channelMax)
+        counterText = string.format("DM %d/%d   Grp %d/%d   Chan %d/%d", dmCount, dmMax, groupCount, groupMax, channelCount, channelMax)
     end
     panel.counter:SetText(self.ui.selectMode and "Select chats" or counterText)
     panel.select:SetText(self.ui.selectMode and "Done" or "Select")
