@@ -883,10 +883,10 @@ function SW:BuildMessagesPanel()
         return pill
     end
     panel.filterAll = filterPill("all", "All")
-    panel.filterDM = filterPill("dm", "DMs")
+    panel.filterDM = filterPill("dm", "DM")
     panel.filterGuild = filterPill("guild", "Guild")
     panel.filterGroup = filterPill("group", "Group")
-    panel.filterChannel = filterPill("channel", "Channels")
+    panel.filterChannel = filterPill("channel", "Chan")
     -- Spread across the full width (x=12 to -30, matching every other
     -- flush row in this column) with the leftover space divided evenly
     -- between the pills, instead of a fixed small gap chained from the
