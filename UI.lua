@@ -2198,11 +2198,22 @@ function SW:BuildSettingsPanel()
     belowPrev(panel.deleteAll, 8, 8)
     panel.deleteAll:SetScript("OnClick", function() StaticPopup_Show("SAVEWHISPERS_CONFIRM_DELETE_ALL") end)
 
-    -- Taller than the visible sum of elements by design - the message-limit
-    -- rows now reserve real space for the native 32px checkbox (see the
-    -- TOPLEFT-anchoring fix above), which pushes everything below down
-    -- further than the old (overlapping) layout did.
-    content:SetSize(800, 1150)
+    -- Measured from the actual placed widgets, not a hardcoded guess - a
+    -- fixed height here doesn't match every theme (native checkboxes are
+    -- taller than the flat themes', sliders/buttons differ in size too),
+    -- so whichever theme actually needed less than the guessed height left
+    -- a permanently empty gap in the scroll area below the real content -
+    -- visible as the game world showing through, since nothing in this
+    -- addon puts an opaque background behind the scroll content itself
+    -- (only the outer window's own backdrop is behind all of this).
+    -- content and panel.deleteAll share the same effective scale (no
+    -- SetScale between them), so a plain GetTop()/GetBottom() difference is
+    -- already in the right units for SetSize - safe here, unlike the scale
+    -- conversion normalizeTopLeft needed for crossing a SetScale boundary.
+    local usedHeight = 1150
+    local top, bottom = content:GetTop(), panel.deleteAll:GetBottom()
+    if top and bottom then usedHeight = math.max(top - bottom + 20, 400) end
+    content:SetSize(800, usedHeight)
 end
 
 function SW:RefreshSettingsPanel()
