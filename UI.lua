@@ -2234,12 +2234,14 @@ local CHANGELOG = {
         version = "V1.2",
         credit = "Developer: Gabbajoe",
         entries = {
-            "Settings reorganized: \"Conversations & Sessions to Keep\" (DMs/Party-Raid/Channels) and \"Messages to Keep per Conversation\" (DMs/Guild/Party-Raid/Channels) are now separate, consistently named sections, each message-count limit has its own \"No limit\" option, and sort-by-recent-activity is on by default.",
-            "Settings now shows a brief \"Saved\" confirmation whenever a value is changed.",
+            "Settings reorganized: \"Conversations & Sessions to Keep\" (DMs/Party-Raid/Channels) and \"Messages to Keep per Conversation\" (DMs/Guild/Party-Raid/Channels) are now separate, consistently named sections, each message limit has its own \"No limit\" option, sort-by-recent-activity is on by default, and changing a value shows a brief \"Saved\" confirmation.",
             "Choose which categories (DMs/Guild/Group/Channels) count toward the minimap button's unread badge.",
-            "Messages tab: added a Channels filter pill alongside All/DMs/Guild/Group.",
+            "Messages tab: added a Channels filter pill (All/DM/Guild/Group/Chan), and the conversation counter now shows the count/limit for whichever filter is active instead of always DMs.",
+            "Guild Chat: removed the Pin and Members buttons - Guild Chat is always a single conversation, so pinning did nothing, and Members just duplicated the default Guild Roster window.",
+            "Party/Raid session Members popups no longer show online/offline status - it was checking the player's currently grouped units, which for an old session showed whoever they happen to be grouped with today rather than who was actually in that session.",
             "Fixed: chat text looked slightly blurry compared to the default chat frame at every Chat text scale setting.",
-            "Fixed: the Interface scale and Chat text scale sliders made the window visibly jump around while dragging.",
+            "Fixed: the Interface scale and Chat text scale sliders made the window visibly jump around while dragging, and at any Interface Scale other than 100% the window would land far short of wherever it was actually dragged to.",
+            "Fixed: a Party/Raid session could get silently split into multiple fragments mid-conversation if the client briefly misreported being in a party right after a loading screen or raid conversion, orphaning the original session.",
         },
     },
     {
