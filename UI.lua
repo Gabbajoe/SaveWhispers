@@ -1798,10 +1798,17 @@ StaticPopupDialogs["SAVEWHISPERS_CONFIRM_DELETE_GROUP"] = {
 -- recolorable backdrop, so this uses its own overlay frame rather than
 -- trying to recolor the field's own border. No fade - shows/hides
 -- instantly, matching that nothing else in this addon animates.
-local function flashSaved(field)
+-- anchorWidget lets a caller put the "Saved" text somewhere other than
+-- directly right of the field itself - the message-limit rows also have a
+-- "No limit" checkbox+label sitting right there, and the text used to land
+-- on top of/behind them. below anchors it under the field instead of to
+-- the right entirely - some rows (e.g. "DM conversations to keep") have
+-- another field's caption sitting immediately to the right with no gap at
+-- all, so "right of X" has nowhere safe to go regardless of X.
+local function flashSaved(field, anchorWidget, below)
+    anchorWidget = anchorWidget or field
     if not field.savedText then
         field.savedText = text(field:GetParent(), "Saved", "GameFontDisableSmall", 0.35, 0.85, 0.35)
-        field.savedText:SetPoint("LEFT", field, "RIGHT", 8, 0)
         field.savedText:Hide()
         field.savedBorder = CreateFrame("Frame", nil, field:GetParent(), BACKDROP)
         field.savedBorder:SetPoint("TOPLEFT", field, "TOPLEFT", -3, 3)
@@ -1809,6 +1816,12 @@ local function flashSaved(field)
         field.savedBorder:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
         field.savedBorder:SetBackdropBorderColor(0.35, 0.85, 0.35, 1)
         field.savedBorder:Hide()
+    end
+    field.savedText:ClearAllPoints()
+    if below then
+        field.savedText:SetPoint("TOPLEFT", anchorWidget, "BOTTOMLEFT", 0, -2)
+    else
+        field.savedText:SetPoint("LEFT", anchorWidget, "RIGHT", 8, 0)
     end
     field.savedText:Show()
     field.savedBorder:Show()
@@ -1929,7 +1942,10 @@ function SW:BuildSettingsPanel()
             value = math.floor(value)
             SW.DB.settings[setting] = value
             field:ClearFocus()
-            flashSaved(field)
+            -- Below, not to the right - "DM conversations to keep" has
+            -- "Party/Raid sessions to keep" sitting immediately right of
+            -- its field with no gap, so the text landed on top of it.
+            flashSaved(field, nil, true)
             SW:RefreshSettingsPanel()
         end
         field:SetScript("OnEnterPressed", apply)
@@ -1956,20 +1972,20 @@ function SW:BuildSettingsPanel()
     local function addMessageLimitField(label, setting, unlimitedSetting, minimum, default)
         local caption = text(content, label, "GameFontHighlightSmall")
         caption:SetWidth(190)
-        belowPrev(caption, 8, 10)
+        -- 14, not 10 - the checkbox below is centered on the field and can
+        -- be taller than it (32px native vs. field's 20px), so it needs a
+        -- bit more headroom above to clear the row above without bleeding
+        -- into it (see the centering comment below).
+        belowPrev(caption, 8, 14)
         local field = numberField(content, 60, 20)
-        -- TOPLEFT-relative, not LEFT: a center anchor put the field's/
-        -- checkbox's midline on the caption's thin text line, so the much
-        -- taller native checkbox (32px) bled both above into the row above
-        -- and below into the row below with only a 10px nominal gap -
-        -- visibly overlapping/garbled rows. Anchoring from the top and only
-        -- offsetting downward keeps everything within this row's own space,
-        -- and prev is then advanced to the checkbox (the row's tallest
-        -- widget) below so the next row's gap is measured from its real
-        -- bottom edge instead of the caption's.
         field:SetPoint("TOPLEFT", caption, "TOPLEFT", 196, 3)
         local unlimitedBox = checkButton(content)
-        unlimitedBox:SetPoint("TOPLEFT", field, "TOPRIGHT", 14, 6)
+        -- Centered on the field's own height, not just nudged down a fixed
+        -- amount - the checkbox is a different size per theme (32px native
+        -- UICheckButtonTemplate vs. 24px on the flat themes), and a fixed
+        -- offset left it visibly lower than the field on every theme.
+        local boxHeight = unlimitedBox:GetHeight() or 24
+        unlimitedBox:SetPoint("TOPLEFT", field, "TOPRIGHT", 14, (boxHeight - 20) / 2)
         local unlimitedLabel = text(content, "No limit", "GameFontHighlightSmall")
         unlimitedLabel:SetPoint("LEFT", unlimitedBox, "RIGHT", 2, 0)
         local function apply()
@@ -1978,7 +1994,7 @@ function SW:BuildSettingsPanel()
             value = math.floor(value)
             SW.DB.settings[setting] = value
             field:ClearFocus()
-            flashSaved(field)
+            flashSaved(field, unlimitedLabel)
             SW:RefreshSettingsPanel()
         end
         field:SetScript("OnEnterPressed", apply)
