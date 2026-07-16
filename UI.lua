@@ -1838,11 +1838,19 @@ function SW:BuildSettingsPanel()
     -- dragged every following section rightward with it. Two independent
     -- SetPoint calls - one constrains Y only, the other X only - is the
     -- standard WoW pattern for this and keeps the two fully decoupled.
+    -- `content` sits flush against the scroll frame's own clip edge with no
+    -- inherent padding - several call sites below use a small negative x
+    -- (e.g. -6 for "Danger Zone") as a purely relative optical nudge, which
+    -- used to be safe when x was measured from a widget with its own
+    -- margin. Anchored straight to content's edge, those went negative
+    -- enough to visibly clip the first letter. A fixed left margin absorbs
+    -- that instead of having to rework every call site's nudge value.
+    local MARGIN = 10
     local prev = icon
     local function belowPrev(widget, x, gap)
         widget:ClearAllPoints()
         widget:SetPoint("TOP", prev, "BOTTOM", 0, -(gap or 10))
-        widget:SetPoint("LEFT", content, "LEFT", x or 0, 0)
+        widget:SetPoint("LEFT", content, "LEFT", MARGIN + (x or 0), 0)
         prev = widget
         return widget
     end
