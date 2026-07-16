@@ -5,7 +5,7 @@ _G.SaveWhispers = SW
 
 SW.name = "SaveWhispers"
 SW.shortName = "SW"
-SW.version = "1.1"
+SW.version = "1.2"
 SW.addonName = ADDON_NAME or "SaveWhispers"
 SW.BackdropTemplate = BackdropTemplateMixin and "BackdropTemplate" or nil
 SW.initialized = false
@@ -66,6 +66,22 @@ function SW:InitDatabase()
     end
     self.DB.settings = self:MergeDefaults(self.DB.settings, self.Database.defaults.settings)
     self.DB.minimap = self:MergeDefaults(self.DB.minimap, self.Database.defaults.minimap)
+
+    -- One-time migration from the old shared maxGroupMessages (pre-split):
+    -- carry its value into Guild/Party-Raid/Channel so nobody's existing
+    -- customization silently resets to the new default. DMs previously had
+    -- no limit at all - preserve that as "unlimited" for existing installs
+    -- instead of suddenly trimming someone's long DM history down to 1500.
+    if self.DB.settings.maxGroupMessages and not self.DB.settings.migratedGroupMessageLimit then
+        local oldValue = tonumber(self.DB.settings.maxGroupMessages)
+        if oldValue then
+            self.DB.settings.maxGuildMessages = oldValue
+            self.DB.settings.maxPartyRaidMessages = oldValue
+            self.DB.settings.maxChannelMessages = oldValue
+        end
+        self.DB.settings.dmMessagesUnlimited = true
+        self.DB.settings.migratedGroupMessageLimit = true
+    end
     if self.EnsureGroupConversation then
         self:EnsureGroupConversation("guild")
     end
@@ -116,17 +132,30 @@ function SW:InitDatabase()
         end
     end
 
-    -- A Guild/Party/Raid/channel conversation that grew past the current
-    -- maxGroupMessages limit (e.g. from before the limit existed, or after
-    -- lowering it in Settings) would otherwise only shrink by one message
-    -- per new incoming message - taking potentially hundreds of messages to
-    -- actually catch up, all the while making every window refresh render
-    -- (and re-render on each new message) far more than it needs to.
-    local groupLimit = math.max(50, math.floor(tonumber(self.DB.settings.maxGroupMessages) or 1500))
+    -- A conversation that grew past its current per-category limit (e.g.
+    -- from before the limit existed, or after lowering it in Settings)
+    -- would otherwise only shrink by one message per new incoming message -
+    -- taking potentially hundreds of messages to actually catch up, all the
+    -- while making every window refresh render far more than it needs to.
+    -- SW:MessageLimitFor is defined in Whispers.lua, already loaded by the
+    -- time this actually runs (PLAYER_LOGIN, not file-load order).
     for _, conversation in pairs(self.DB.groupChats) do
         if type(conversation) == "table" and type(conversation.messages) == "table" then
-            while #conversation.messages > groupLimit do
-                table.remove(conversation.messages, 1)
+            local cap = self:MessageLimitFor(conversation.channel)
+            if cap then
+                while #conversation.messages > cap do
+                    table.remove(conversation.messages, 1)
+                end
+            end
+        end
+    end
+    local dmCap = self:MessageLimitFor("dm")
+    if dmCap then
+        for _, conversation in pairs(self.DB.conversations) do
+            if type(conversation) == "table" and type(conversation.messages) == "table" then
+                while #conversation.messages > dmCap do
+                    table.remove(conversation.messages, 1)
+                end
             end
         end
     end
@@ -208,6 +237,9 @@ eventFrame:RegisterEvent("CHAT_MSG_CHANNEL")
 eventFrame:RegisterEvent("GROUP_JOINED")
 eventFrame:RegisterEvent("GROUP_LEFT")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+-- Fires when C_Club.RequestMoreMessagesBefore's requested data actually
+-- arrives from the server - see SW:LoadOlderGuildMessages in Whispers.lua.
+if C_Club then eventFrame:RegisterEvent("CLUB_MESSAGE_HISTORY_LOADED") end
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_LOADED" then
         local loadedName = ...
@@ -238,6 +270,11 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     elseif SW.initialized and SW.DB.settings.enabled and event == "GROUP_LEFT" then
         SW:EndGroupSession("party")
         SW:EndGroupSession("raid")
+    elseif event == "CLUB_MESSAGE_HISTORY_LOADED" then
+        local clubId, streamId = ...
+        if SW.initialized and SW.HandleGuildMessageHistoryLoaded then
+            SW:HandleGuildMessageHistoryLoaded(clubId, streamId)
+        end
     elseif SW.initialized and SW.DB.settings.enabled and event == "GROUP_ROSTER_UPDATE" then
         -- Self-correcting fallback for a party promoted to a raid (or vice
         -- versa) without a clean GROUP_LEFT/GROUP_JOINED pair: relabel

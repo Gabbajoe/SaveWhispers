@@ -8,14 +8,27 @@ local function messageText(value)
     return string.sub(value, 1, MAX_MESSAGE_LENGTH)
 end
 
--- Guild/party/channel chat is never deleted automatically (unlike DMs, which
--- are capped by maxConversations), so it grows forever otherwise. Left
--- unbounded, this is what eventually bloats SavedVariables to the point
--- login/reload gets noticeably slower. Private DM history is kept in full,
--- since persisting it is the whole point of this addon. Both limits are
--- configurable in Settings.
-local function groupMessageLimit()
-    return math.max(50, math.floor(tonumber(SW.DB.settings.maxGroupMessages) or 1500))
+-- Every category (DM/Guild/Party-Raid/Channel) has its own configurable
+-- per-conversation message cap, each with a "no limit" toggle - returns nil
+-- for "don't trim", which appendMessage already treats as unbounded. Kept
+-- as a table method (not a file-local function) so Core.lua's InitDatabase
+-- can reuse the exact same logic for its immediate-trim-on-load pass.
+function SW:MessageLimitFor(kind)
+    local settings = self.DB.settings
+    local unlimitedKey, valueKey
+    if kind == "dm" then
+        unlimitedKey, valueKey = "dmMessagesUnlimited", "maxDMMessages"
+    elseif kind == "guild" then
+        unlimitedKey, valueKey = "guildMessagesUnlimited", "maxGuildMessages"
+    elseif kind == "party" or kind == "raid" then
+        unlimitedKey, valueKey = "partyRaidMessagesUnlimited", "maxPartyRaidMessages"
+    elseif kind == "channel" then
+        unlimitedKey, valueKey = "channelMessagesUnlimited", "maxChannelMessages"
+    else
+        return nil
+    end
+    if settings[unlimitedKey] then return nil end
+    return math.max(50, math.floor(tonumber(settings[valueKey]) or 1500))
 end
 
 local function appendMessage(conversation, message, cap)
@@ -231,7 +244,7 @@ function SW:ConvertGroupSession(fromKind, toKind)
         system = true,
         text = toKind == "raid" and "Group was converted to a raid." or "Raid was converted to a group.",
         timestamp = self:Now(),
-    }, groupMessageLimit())
+    }, self:MessageLimitFor(toKind))
     conversation.lastActivity = self:Now()
     self.DB[fromDbKey] = nil
     self.DB[toDbKey] = key
@@ -255,6 +268,138 @@ function SW:TrimGroupSessions()
         if self.DB.openPartySessionKey ~= conversation.key and self.DB.openRaidSessionKey ~= conversation.key then
             self.DB.groupChats[conversation.key] = nil
         end
+    end
+end
+
+-- Same pattern as TrimGroupSessions: manually-added channels had no cap on
+-- how many could pile up at all.
+function SW:TrimChannels()
+    local cap = math.max(1, math.floor(tonumber(self.DB.settings.maxChannels) or 50))
+    local channels = {}
+    for _, conversation in pairs(self.DB.groupChats or {}) do
+        if conversation.channel == "channel" then
+            channels[#channels + 1] = conversation
+        end
+    end
+    if #channels <= cap then return end
+    table.sort(channels, function(a, b) return (a.lastActivity or 0) < (b.lastActivity or 0) end)
+    for i = 1, #channels - cap do
+        self.DB.groupChats[channels[i].key] = nil
+    end
+end
+
+-- Guild Chat's default Blizzard window (Guild & Communities) can scroll back
+-- weeks because it reads from the Communities/Club system (C_Club), a real
+-- server-side store separate from the CHAT_MSG_GUILD event we normally
+-- listen to. This asks that system for older messages and merges whatever
+-- comes back into our own history. Left deliberately defensive (pcall,
+-- multiple nil-checks) since the exact field names on Club API tables in
+-- Classic Era haven't been verified against a live client - if Blizzard's
+-- shape differs from what's assumed here, this should fail with a message
+-- instead of a hard Lua error.
+function SW:HandleGuildMessageHistoryLoaded(clubId, streamId)
+    local pending = self.pendingGuildBackfill
+    if not pending or pending.clubId ~= clubId or pending.streamId ~= streamId then return end
+    self.pendingGuildBackfill = nil
+    local conversation = self.DB.groupChats and self.DB.groupChats[pending.key]
+    if not conversation then return end
+
+    local ok, messages = pcall(C_Club.GetMessagesBefore, clubId, streamId, nil, 100)
+    if not ok or type(messages) ~= "table" then
+        self:Print("Loading older Guild Chat messages failed.")
+        return
+    end
+
+    local seen = {}
+    for _, existing in ipairs(conversation.messages) do
+        seen[(existing.sender or "") .. "|" .. (existing.timestamp or 0) .. "|" .. (existing.text or "")] = true
+    end
+    local ownName = UnitName and UnitName("player") or ""
+    local ownKey = self:GetPlayerKey(ownName)
+    local added = 0
+    for _, clubMessage in ipairs(messages) do
+        local content = clubMessage.content
+        if type(content) == "string" and content ~= "" then
+            local senderName
+            local author = clubMessage.author
+            if author then
+                if author.memberId and C_Club.GetMemberInfo then
+                    local ok2, memberInfo = pcall(C_Club.GetMemberInfo, clubId, author.memberId)
+                    if ok2 and memberInfo then senderName = memberInfo.name end
+                end
+                senderName = senderName or author.name
+            end
+            senderName = self:NormalizePlayerName(senderName) or "Unknown"
+            local timestamp = tonumber(clubMessage.sentTimestamp) or self:Now()
+            local senderKey = self:GetPlayerKey(senderName)
+            local outgoing = ownKey and senderKey and self:GetPlayerBaseKey(ownKey) == self:GetPlayerBaseKey(senderKey)
+            local dedupKey = senderName .. "|" .. timestamp .. "|" .. content
+            if not seen[dedupKey] then
+                seen[dedupKey] = true
+                conversation.messages[#conversation.messages + 1] = {
+                    text = content,
+                    sender = senderName,
+                    timestamp = timestamp,
+                    outgoing = outgoing and true or false,
+                }
+                added = added + 1
+            end
+        end
+    end
+
+    if added > 0 then
+        table.sort(conversation.messages, function(a, b) return (a.timestamp or 0) < (b.timestamp or 0) end)
+        local cap = self:MessageLimitFor("guild")
+        if cap then
+            while #conversation.messages > cap do
+                table.remove(conversation.messages, 1)
+            end
+        end
+    end
+    self:Print(added .. " older Guild Chat message(s) loaded.")
+    self:NotifyDataChanged()
+end
+
+function SW:LoadOlderGuildMessages(conversation)
+    if not conversation or conversation.channel ~= "guild" then return end
+    if not C_Club or not C_Club.GetSubscribedClubs then
+        self:Print("Loading older Guild Chat isn't available on this client (Communities data not found).")
+        return
+    end
+    if self.pendingGuildBackfill then
+        self:Print("Already loading older Guild Chat messages...")
+        return
+    end
+    local ok, err = pcall(function()
+        local clubId
+        for _, clubInfo in ipairs(C_Club.GetSubscribedClubs()) do
+            if clubInfo.clubType == Enum.ClubType.Guild then
+                clubId = clubInfo.clubId
+                break
+            end
+        end
+        if not clubId then error("no guild Community found") end
+        local streams = C_Club.GetStreams(clubId)
+        local streamId = streams and streams[1] and streams[1].streamId
+        if not streamId then error("no Guild Chat stream found") end
+        -- Anchor "older" on the oldest message the Club system already has
+        -- cached client-side (opening the default Guild & Communities window
+        -- at least once populates this) - GetMessagesBefore(..., nil, ...)
+        -- returns whatever's cached up to "now", and its first entry is the
+        -- oldest of that batch.
+        local cached = C_Club.GetMessagesBefore(clubId, streamId, nil, 100)
+        local oldest = cached and cached[1] and cached[1].messageId
+        if not oldest then
+            error("no cached Guild Chat history to anchor on yet - open the default Guild & Communities window once first")
+        end
+        self.pendingGuildBackfill = { clubId = clubId, streamId = streamId, key = conversation.key }
+        C_Club.RequestMoreMessagesBefore(clubId, streamId, oldest, 50)
+    end)
+    if not ok then
+        self.pendingGuildBackfill = nil
+        self:Print("Couldn't load older Guild Chat messages: " .. tostring(err))
+    else
+        self:Print("Requesting older Guild Chat messages from the server...")
     end
 end
 
@@ -289,7 +434,7 @@ function SW:StoreWhisper(player, text, outgoing, guid)
         timestamp = self:Now(),
         outgoing = outgoing and true or false,
         guid = guid,
-    })
+    }, self:MessageLimitFor("dm"))
     conversation.lastActivity = self:Now()
     -- CHAT_MSG_WHISPER_INFORM (an outgoing whisper's delivery echo) only
     -- fires when the target is actually online and reachable, same as them
@@ -328,7 +473,11 @@ function SW:StoreGroupMessage(channel, player, text, guid)
         timestamp = self:Now(),
         outgoing = outgoing and true or false,
         guid = guid,
-    }, groupMessageLimit())
+    -- conversation.channel (not the "channel" param) is always the
+    -- canonical kind ("guild"/"party"/"raid"/"channel") - the param itself
+    -- is a composite key like "channel:tradechat" for custom channels,
+    -- since StoreChannelMessage delegates here with that as the lookup key.
+    }, self:MessageLimitFor(conversation.channel))
     conversation.lastActivity = self:Now()
     if not outgoing and (not self.ui or not self.ui.frame:IsShown() or self.ui.activeTab ~= "Messages" or self.ui.selectedKey ~= conversation.key) then
         conversation.unread = (tonumber(conversation.unread) or 0) + 1
@@ -352,6 +501,7 @@ function SW:AddChannelChat(channelName)
     local conversation = self:EnsureGroupConversation(key, channelName, "channel")
     conversation.manual = true
     conversation.lastActivity = conversation.lastActivity or 0
+    self:TrimChannels()
     self:NotifyDataChanged()
     return true, conversation
 end

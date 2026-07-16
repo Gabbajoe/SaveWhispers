@@ -124,12 +124,20 @@ function SW:UpdateMinimapBadge()
         button.badge.text:SetTextColor(1, 1, 1)
         if button.badge.text.SetTextHeight then button.badge.text:SetTextHeight(11) end
     end
+    local settings = self.DB.settings
     local total = 0
-    for _, conversation in pairs(self.DB.conversations or {}) do
-        total = total + (tonumber(conversation.unread) or 0)
+    if settings.badgeCountsDM then
+        for _, conversation in pairs(self.DB.conversations or {}) do
+            total = total + (tonumber(conversation.unread) or 0)
+        end
     end
     for _, conversation in pairs(self.DB.groupChats or {}) do
-        if type(conversation) == "table" then total = total + (tonumber(conversation.unread) or 0) end
+        if type(conversation) == "table" then
+            local include = (conversation.channel == "guild" and settings.badgeCountsGuild)
+                or ((conversation.channel == "party" or conversation.channel == "raid") and settings.badgeCountsGroup)
+                or (conversation.channel == "channel" and settings.badgeCountsChannel)
+            if include then total = total + (tonumber(conversation.unread) or 0) end
+        end
     end
     if total > 0 then
         button.badge.text:SetText(total > 99 and "99+" or tostring(total))

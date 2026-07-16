@@ -1,12 +1,10 @@
 # SaveWhispers (SW) — V1.1
 
-**[Download on CurseForge](https://www.curseforge.com/wow/addons/savewhispers)**
-
 SaveWhispers is a persistent WhatsApp-style whisper inbox for WoW Classic. Incoming and outgoing whispers, plus Guild, Party, Raid and manually added channel chat, are stored locally until you remove the conversation. The window uses the game's own Blizzard dialog art, so it looks and feels like a native part of the UI.
 
 ## Installation
 
-Grab the latest release from [CurseForge](https://www.curseforge.com/wow/addons/savewhispers) or the [Releases page](../../releases), and extract the `SaveWhispers` folder into `World of Warcraft/_classic_era_/Interface/AddOns`.
+Copy this folder to `World of Warcraft/_classic_era_/Interface/AddOns/SaveWhispers` and enable **SaveWhispers** in the AddOns list.
 
 Open it with `/sw` or the movable minimap button.
 
@@ -35,6 +33,16 @@ Open it with `/sw` or the movable minimap button.
 
 ## Changelog
 
+### V1.2 (Developer: Gabbajoe)
+
+- Settings reorganized: "Conversations & Sessions to Keep" (DMs/Party-Raid/Channels) and "Messages to Keep per Conversation" (DMs/Guild/Party-Raid/Channels) are now separate, consistently named sections, each message-count limit has its own "No limit" option, and sort-by-recent-activity is on by default.
+- Settings now shows a brief "Saved" confirmation whenever a value is changed.
+- Choose which categories (DMs/Guild/Group/Channels) count toward the minimap button's unread badge.
+- Messages tab: added a Channels filter pill alongside All/DMs/Guild/Group.
+- Guild Chat: "Load older messages" button backfills history from Blizzard's own Guild & Communities data.
+- Fixed: chat text looked slightly blurry compared to the default chat frame at every Chat text scale setting.
+- Fixed: the Interface scale and Chat text scale sliders made the window visibly jump around while dragging.
+
 ### V1.1 (Developer: Gabbajoe)
 
 - Native Blizzard window look (parchment/gold), pixel-perfect resizing and dragging.
@@ -60,7 +68,3 @@ Open it with `/sw` or the movable minimap button.
 - Persistent private, Guild, Party and selected channel histories.
 - Chat colors, pins, member windows and a movable minimap button.
 - Resizable SaveWhispers window.
-
-## License
-
-MIT — see [LICENSE.txt](LICENSE.txt).

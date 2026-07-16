@@ -9,6 +9,14 @@ local ICON = "Interface\\AddOns\\SaveWhispers\\assets\\savewhispers_icon"
 -- available in full via "Export chat".
 local MAX_RENDERED_MESSAGES = 200
 
+-- Chat text scale used to call SetTextHeight(px), which scales the glyphs
+-- of whatever size the font was already rendered at rather than asking the
+-- font engine to re-rasterize at that size - it looked visibly blurrier
+-- than the real chat frame, which resizes its font via SetFont. Resolving
+-- the chat font's path/flags once and using SetFont everywhere instead
+-- fixes that.
+local CHAT_FONT_PATH, _, CHAT_FONT_FLAGS = GameFontHighlightSmall:GetFont()
+
 -- The classic parchment/gold "dialog box" look used by StaticPopup and most
 -- native Blizzard windows. Using the real art (instead of a hand-rolled
 -- flat-color backdrop) is what makes the addon look like part of the game.
@@ -869,13 +877,14 @@ function SW:BuildMessagesPanel()
     panel.filterDM = filterPill("dm", "DMs")
     panel.filterGuild = filterPill("guild", "Guild")
     panel.filterGroup = filterPill("group", "Group")
+    panel.filterChannel = filterPill("channel", "Channels")
     -- Spread across the full width (x=12 to -30, matching every other
     -- flush row in this column) with the leftover space divided evenly
-    -- between the 4 pills, instead of a fixed small gap chained from the
+    -- between the pills, instead of a fixed small gap chained from the
     -- right - that left the row's total width (and so its left edge)
     -- wherever the pills' own text happened to add up to.
     do
-        local pills = { panel.filterAll, panel.filterDM, panel.filterGuild, panel.filterGroup }
+        local pills = { panel.filterAll, panel.filterDM, panel.filterGuild, panel.filterGroup, panel.filterChannel }
         local totalWidth = 0
         for _, pill in ipairs(pills) do totalWidth = totalWidth + pill:GetWidth() end
         local available = 242 - 12 - 30
@@ -943,6 +952,15 @@ function SW:BuildMessagesPanel()
             lines[#lines + 1] = "[" .. date("%Y-%m-%d %H:%M:%S", message.timestamp or 0) .. "] " .. speaker .. ": " .. plainText(message.text)
         end
         SW:ShowCopyPopup("Export - " .. conversation.name, table.concat(lines, "\n"))
+    end)
+    -- Guild Chat is the one conversation type with real history sitting on
+    -- Blizzard's own servers (the Communities/Club system, separate from
+    -- CHAT_MSG_GUILD) - this pulls some of it in, merged with whatever
+    -- we've already recorded live.
+    panel.loadOlder = fitButton(button(panel.right, "Load older messages", 10, 22))
+    panel.loadOlder:SetScript("OnClick", function()
+        local conversation = SW:GetConversation(SW.ui.selectedKey)
+        if conversation then SW:LoadOlderGuildMessages(conversation) end
     end)
     panel.star = iconButton(panel.right, "Interface\\TargetingFrame\\UI-RaidTargetingIcon_1", "Toggle watchlist favorite")
     panel.star:SetScript("OnClick", function() if SW.ui.selectedKey then SW:ToggleFavorite(SW.ui.selectedKey) end end)
@@ -1023,15 +1041,16 @@ function SW:RefreshMessagesPanel()
             if listFilter == "dm" then include = not conversation.system
             elseif listFilter == "guild" then include = conversation.system and conversation.channel == "guild"
             elseif listFilter == "group" then include = conversation.system and (conversation.channel == "party" or conversation.channel == "raid")
+            elseif listFilter == "channel" then include = conversation.system and conversation.channel == "channel"
             end
             if include then filtered[#filtered + 1] = conversation end
         end
         conversations = filtered
     end
-    for _, pill in ipairs({ panel.filterAll, panel.filterDM, panel.filterGuild, panel.filterGroup }) do
+    for _, pill in ipairs({ panel.filterAll, panel.filterDM, panel.filterGuild, panel.filterGroup, panel.filterChannel }) do
         pill:UnlockHighlight()
     end
-    local activePill = ({ all = panel.filterAll, dm = panel.filterDM, guild = panel.filterGuild, group = panel.filterGroup })[listFilter]
+    local activePill = ({ all = panel.filterAll, dm = panel.filterDM, guild = panel.filterGuild, group = panel.filterGroup, channel = panel.filterChannel })[listFilter]
     if activePill then activePill:LockHighlight() end
     if self.ui.selectedKey and not self:GetConversation(self.ui.selectedKey) then self.ui.selectedKey = nil end
     -- Switching filter pills should switch the right-hand view to
@@ -1243,7 +1262,7 @@ function SW:RefreshChatPanel()
         panel.contactRealm:Hide()
         panel.statusDot:Hide(); panel.statusText:Hide()
         panel.star:Hide(); panel.pin:Hide(); panel.members:Hide(); panel.delete:Hide()
-        panel.copyName:Hide(); panel.exportChat:Hide()
+        panel.copyName:Hide(); panel.exportChat:Hide(); panel.loadOlder:Hide()
         panel.message:Hide(); panel.send:Hide()
         panel.chat:ClearAllPoints()
         panel.chat:SetPoint("TOPLEFT", 16, -64)
@@ -1274,6 +1293,7 @@ function SW:RefreshChatPanel()
     -- conversations, only for a real player DM.
     panel.copyName:SetShown(not conversation.system)
     panel.exportChat:Show()
+    panel.loadOlder:SetShown(conversation.system and conversation.channel == "guild")
     if conversation.system then
         panel.star:Hide(); panel.members:Show(); panel.pin:Show(); panel.statusDot:Hide(); panel.statusText:Hide()
         if conversation.channel == "channel" then
@@ -1321,7 +1341,7 @@ function SW:RefreshChatPanel()
     -- sharing the top row - with 6 buttons crammed against the right edge
     -- the row got long enough to run into the contact name on the left.
     flowRight(panel.right, -12, -10, 6, { panel.delete, panel.members, panel.pin, panel.star })
-    flowRight(panel.right, -12, -38, 6, { panel.exportChat, panel.copyName })
+    flowRight(panel.right, -12, -38, 6, { panel.exportChat, panel.copyName, panel.loadOlder })
     local width = math.max(340, panel.chat:GetWidth() - 5)
     local y = 0
     if conversation.members and #conversation.members > 0 then
@@ -1364,7 +1384,7 @@ function SW:RefreshChatPanel()
             separator:ClearAllPoints()
             separator:SetPoint("TOPLEFT", content, "TOPLEFT", 8, y)
             separator.text:SetWidth(width - 16)
-            if separator.text.SetTextHeight then separator.text:SetTextHeight(12) end
+            if separator.text.SetFont then separator.text:SetFont(CHAT_FONT_PATH, 12, CHAT_FONT_FLAGS) end
             separator:SetSize(width - 16, 16)
             y = y - 20
             lastDayKey = dayKey
@@ -1382,7 +1402,7 @@ function SW:RefreshChatPanel()
             note:ClearAllPoints()
             note:SetPoint("TOPLEFT", content, "TOPLEFT", 8, y)
             note.text:SetWidth(width - 16)
-            if note.text.SetTextHeight then note.text:SetTextHeight(12) end
+            if note.text.SetFont then note.text:SetFont(CHAT_FONT_PATH, 12, CHAT_FONT_FLAGS) end
             note:SetSize(width - 16, 16)
             y = y - 20
         else
@@ -1429,13 +1449,13 @@ function SW:RefreshChatPanel()
                     widget = poolLinkToken(content)
                     widget.text:SetText(token.text)
                     widget.link = token.link
-                    if widget.text.SetTextHeight then widget.text:SetTextHeight(fontHeight) end
+                    if widget.text.SetFont then widget.text:SetFont(CHAT_FONT_PATH, fontHeight, CHAT_FONT_FLAGS) end
                     tokenWidth = widget.text:GetStringWidth() or 10
                 else
                     widget = poolWordToken(content)
                     widget:SetText(token.text)
                     widget:SetTextColor(0.92, 0.92, 0.92)
-                    if widget.SetTextHeight then widget:SetTextHeight(fontHeight) end
+                    if widget.SetFont then widget:SetFont(CHAT_FONT_PATH, fontHeight, CHAT_FONT_FLAGS) end
                     tokenWidth = widget:GetStringWidth() or 10
                 end
                 if not first and x + spaceWidth + tokenWidth > availableWidth then
@@ -1774,6 +1794,31 @@ StaticPopupDialogs["SAVEWHISPERS_CONFIRM_DELETE_GROUP"] = {
     preferredIndex = 3,
 }
 
+-- Theme-independent "value saved" flash for a Settings field -
+-- InputBoxTemplate's (classic theme) border is texture art with no
+-- recolorable backdrop, so this uses its own overlay frame rather than
+-- trying to recolor the field's own border. No fade - shows/hides
+-- instantly, matching that nothing else in this addon animates.
+local function flashSaved(field)
+    if not field.savedText then
+        field.savedText = text(field:GetParent(), "Saved", "GameFontDisableSmall", 0.35, 0.85, 0.35)
+        field.savedText:SetPoint("LEFT", field, "RIGHT", 8, 0)
+        field.savedText:Hide()
+        field.savedBorder = CreateFrame("Frame", nil, field:GetParent(), BACKDROP)
+        field.savedBorder:SetPoint("TOPLEFT", field, "TOPLEFT", -3, 3)
+        field.savedBorder:SetPoint("BOTTOMRIGHT", field, "BOTTOMRIGHT", 3, -3)
+        field.savedBorder:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+        field.savedBorder:SetBackdropBorderColor(0.35, 0.85, 0.35, 1)
+        field.savedBorder:Hide()
+    end
+    field.savedText:Show()
+    field.savedBorder:Show()
+    C_Timer.After(1.5, function()
+        if field.savedText then field.savedText:Hide() end
+        if field.savedBorder then field.savedBorder:Hide() end
+    end)
+end
+
 function SW:BuildSettingsPanel()
     local panel = self:NewPanel("Settings")
     panel.scroll = scroll(panel)
@@ -1789,56 +1834,158 @@ function SW:BuildSettingsPanel()
     icon:SetTexture("Interface\\Icons\\INV_Misc_Wrench_01")
     local heading = text(content, "Settings", "GameFontNormalLarge")
     heading:SetPoint("LEFT", icon, "RIGHT", 6, 1)
-    panel.enabled = checkButton(content)
-    panel.enabled:SetPoint("TOPLEFT", 2, -50)
-    panel.enabled.label = text(content, "Enable SaveWhispers", "GameFontHighlightSmall")
-    panel.enabled.label:SetPoint("LEFT", panel.enabled, "RIGHT", 2, 0)
-    panel.enabled:SetScript("OnClick", function(self) SW:SetSetting("enabled", self:GetChecked() and true or false) end)
-    panel.minimap = checkButton(content)
-    panel.minimap:SetPoint("TOPLEFT", 2, -78)
-    panel.minimap.label = text(content, "Show minimap button", "GameFontHighlightSmall")
-    panel.minimap.label:SetPoint("LEFT", panel.minimap, "RIGHT", 2, 0)
-    panel.minimap:SetScript("OnClick", function(self) SW:SetSetting("showMinimap", self:GetChecked() and true or false) end)
-    panel.sortByActivity = checkButton(content)
-    panel.sortByActivity:SetPoint("TOPLEFT", 2, -106)
-    panel.sortByActivity.label = text(content, "Sort chats by recent activity (unchecked: alphabetical)", "GameFontHighlightSmall")
-    panel.sortByActivity.label:SetPoint("LEFT", panel.sortByActivity, "RIGHT", 2, 0)
-    panel.sortByActivity:SetScript("OnClick", function(self) SW:SetSetting("sortByActivity", self:GetChecked() and true or false) end)
 
-    local limitsHeading = text(content, "Limits", "GameFontNormal")
-    limitsHeading:SetPoint("TOPLEFT", 4, -140)
-    local limitsHint = text(content, "The oldest entry is dropped once a limit is reached.", "GameFontDisableSmall")
-    limitsHint:SetPoint("TOPLEFT", 4, -162)
+    -- Every section below anchors to the bottom of the previous widget
+    -- instead of a hardcoded pixel offset, so inserting or resizing one
+    -- row can never again silently overlap the ones below it (see the
+    -- "Limits" overlap bug from earlier this session).
+    local prev = icon
+    local function belowPrev(widget, x, gap)
+        widget:ClearAllPoints()
+        widget:SetPoint("TOPLEFT", prev, "BOTTOMLEFT", x or 0, -(gap or 10))
+        prev = widget
+        return widget
+    end
 
-    local function addLimitField(id, setting, label, offset, minimum, default)
+    local function addCheckbox(label, setting)
+        local box = checkButton(content)
+        belowPrev(box, -2, 8)
+        box.label = text(content, label, "GameFontHighlightSmall")
+        box.label:SetPoint("LEFT", box, "RIGHT", 2, 0)
+        box:SetScript("OnClick", function(self) SW:SetSetting(setting, self:GetChecked() and true or false) end)
+        return box
+    end
+    panel.enabled = addCheckbox("Enable SaveWhispers", "enabled")
+    panel.minimap = addCheckbox("Show minimap button", "showMinimap")
+    panel.sortByActivity = addCheckbox("Sort chats by recent activity (unchecked: alphabetical)", "sortByActivity")
+
+    -- Minimap badge category toggles
+    local badgeHeading = text(content, "Minimap Badge Counts", "GameFontNormal")
+    belowPrev(badgeHeading, -2, 20)
+    local badgeHint = text(content, "Which categories add to the unread-count badge on the minimap button.", "GameFontDisableSmall")
+    belowPrev(badgeHint, 0, 4)
+    panel.badgeChecks = {}
+    local function addBadgeCheckbox(label, setting, anchorTo, xOffset)
+        local box = checkButton(content)
+        if anchorTo then
+            box:SetPoint("TOPLEFT", anchorTo, "TOPLEFT", xOffset, 0)
+        else
+            belowPrev(box, -2, 10)
+        end
+        box.label = text(content, label, "GameFontHighlightSmall")
+        box.label:SetPoint("LEFT", box, "RIGHT", 2, 0)
+        box:SetScript("OnClick", function(self) SW:SetSetting(setting, self:GetChecked() and true or false) end)
+        panel.badgeChecks[#panel.badgeChecks + 1] = { box = box, setting = setting }
+        return box
+    end
+    local badgeDM = addBadgeCheckbox("DMs", "badgeCountsDM")
+    addBadgeCheckbox("Guild", "badgeCountsGuild", badgeDM, 200)
+    local badgeGroup = addBadgeCheckbox("Group", "badgeCountsGroup")
+    addBadgeCheckbox("Channels", "badgeCountsChannel", badgeGroup, 200)
+
+    -- Conversations & Sessions to Keep (count limits - no "unlimited"
+    -- option here, unlike the message caps below: an unbounded number of
+    -- conversations directly grows the always-rendered list, a real
+    -- performance cost rather than just storage).
+    local keepHeading = text(content, "Conversations & Sessions to Keep", "GameFontNormal")
+    belowPrev(keepHeading, -2, 20)
+    local keepHint = text(content, "The oldest entry is dropped once a limit is reached.", "GameFontDisableSmall")
+    belowPrev(keepHint, 0, 4)
+    panel.limitFields = {}
+    local function addLimitField(label, setting, minimum, default, anchorTo, xOffset)
         local caption = text(content, label, "GameFontHighlightSmall")
-        caption:SetPoint("TOPLEFT", 12, offset)
-        local field = numberField(content, 70, 20)
-        field:SetPoint("LEFT", caption, "RIGHT", 10, 0)
+        caption:SetWidth(190)
+        if anchorTo then
+            caption:SetPoint("TOPLEFT", anchorTo, "TOPLEFT", xOffset, 0)
+        else
+            belowPrev(caption, 8, 10)
+        end
+        local field = numberField(content, 60, 20)
+        -- TOPLEFT-relative, not LEFT (which centers vertically on the
+        -- target) - caption's font-string height is much smaller than the
+        -- field's, so a center anchor let the field bleed upward into the
+        -- row above as well as downward into the row below.
+        field:SetPoint("TOPLEFT", caption, "TOPLEFT", 196, 3)
         local function apply()
             local value = tonumber(field:GetText())
             if not value or value < minimum then value = SW.DB.settings[setting] or default end
             value = math.floor(value)
             SW.DB.settings[setting] = value
             field:ClearFocus()
+            flashSaved(field)
             SW:RefreshSettingsPanel()
         end
         field:SetScript("OnEnterPressed", apply)
         field:SetScript("OnEditFocusLost", apply)
-        panel["field" .. id] = field
         panel.limitFields[#panel.limitFields + 1] = { field = field, setting = setting, minimum = minimum, default = default }
+        -- Only the first field of a row should advance the shared anchor -
+        -- a sibling placed via anchorTo shares that same row and must not
+        -- push the next section down twice.
+        if not anchorTo then prev = field end
+        return caption
     end
-    panel.limitFields = {}
-    addLimitField("DMLimit", "maxConversations", "DM conversations to keep", -188, 10, 200)
-    addLimitField("GroupLimit", "maxGroupMessages", "Messages to keep per Guild/Party/channel", -214, 50, 1500)
-    addLimitField("SessionLimit", "maxGroupSessions", "Party/Raid chat sessions to keep", -240, 10, 200)
-    panel.limitWarning = text(content, "", "GameFontDisableSmall", 0.95, 0.75, 0.18)
-    panel.limitWarning:SetPoint("TOPLEFT", 12, -264)
+    local dmKeepCaption = addLimitField("DM conversations to keep", "maxConversations", 10, 200)
+    addLimitField("Party/Raid sessions to keep", "maxGroupSessions", 10, 200, dmKeepCaption, 260)
+    addLimitField("Channels to keep", "maxChannels", 5, 50)
+
+    -- Messages to Keep per Conversation (per-category message caps, each
+    -- with a "No limit" toggle - safe to uncap now that chat rendering is
+    -- capped to the last 200 messages regardless of how many are stored).
+    local msgHeading = text(content, "Messages to Keep per Conversation", "GameFontNormal")
+    belowPrev(msgHeading, -2, 20)
+    local msgHint = text(content, "Applies per conversation - e.g. per DM, or per Party/Raid session.", "GameFontDisableSmall")
+    belowPrev(msgHint, 0, 4)
+    panel.messageLimitFields = {}
+    local function addMessageLimitField(label, setting, unlimitedSetting, minimum, default)
+        local caption = text(content, label, "GameFontHighlightSmall")
+        caption:SetWidth(190)
+        belowPrev(caption, 8, 10)
+        local field = numberField(content, 60, 20)
+        -- TOPLEFT-relative, not LEFT: a center anchor put the field's/
+        -- checkbox's midline on the caption's thin text line, so the much
+        -- taller native checkbox (32px) bled both above into the row above
+        -- and below into the row below with only a 10px nominal gap -
+        -- visibly overlapping/garbled rows. Anchoring from the top and only
+        -- offsetting downward keeps everything within this row's own space,
+        -- and prev is then advanced to the checkbox (the row's tallest
+        -- widget) below so the next row's gap is measured from its real
+        -- bottom edge instead of the caption's.
+        field:SetPoint("TOPLEFT", caption, "TOPLEFT", 196, 3)
+        local unlimitedBox = checkButton(content)
+        unlimitedBox:SetPoint("TOPLEFT", field, "TOPRIGHT", 14, 6)
+        local unlimitedLabel = text(content, "No limit", "GameFontHighlightSmall")
+        unlimitedLabel:SetPoint("LEFT", unlimitedBox, "RIGHT", 2, 0)
+        local function apply()
+            local value = tonumber(field:GetText())
+            if not value or value < minimum then value = SW.DB.settings[setting] or default end
+            value = math.floor(value)
+            SW.DB.settings[setting] = value
+            field:ClearFocus()
+            flashSaved(field)
+            SW:RefreshSettingsPanel()
+        end
+        field:SetScript("OnEnterPressed", apply)
+        field:SetScript("OnEditFocusLost", apply)
+        unlimitedBox:SetScript("OnClick", function(self)
+            SW.DB.settings[unlimitedSetting] = self:GetChecked() and true or false
+            flashSaved(field)
+            SW:RefreshSettingsPanel()
+        end)
+        panel.messageLimitFields[#panel.messageLimitFields + 1] = {
+            field = field, unlimitedBox = unlimitedBox, setting = setting,
+            unlimitedSetting = unlimitedSetting, minimum = minimum, default = default,
+        }
+        prev = unlimitedBox
+    end
+    addMessageLimitField("DM messages", "maxDMMessages", "dmMessagesUnlimited", 50, 1500)
+    addMessageLimitField("Guild Chat messages", "maxGuildMessages", "guildMessagesUnlimited", 50, 1500)
+    addMessageLimitField("Party/Raid session messages", "maxPartyRaidMessages", "partyRaidMessagesUnlimited", 50, 1500)
+    addMessageLimitField("Channel messages", "maxChannelMessages", "channelMessagesUnlimited", 50, 1500)
 
     panel.sliders = {}
-    local function addSlider(id, setting, channel, label, offset, minimum, maximum, step)
+    local function addSlider(id, setting, channel, label, minimum, maximum, step)
         local slider = CreateFrame("Slider", "SaveWhispers" .. id, content, "OptionsSliderTemplate")
-        slider:SetPoint("TOPLEFT", 12, offset)
+        belowPrev(slider, 12, 40)
         slider:SetWidth(250); slider:SetHeight(18)
         slider:SetMinMaxValues(minimum or 0, maximum or 1); slider:SetValueStep(step or 0.05)
         if slider.SetObeyStepOnDrag then slider:SetObeyStepOnDrag(true) end
@@ -1852,20 +1999,30 @@ function SW:BuildSettingsPanel()
         end
         slider.label = text(content, label, "GameFontHighlightSmall")
         slider.label:SetPoint("BOTTOMLEFT", slider, "TOPLEFT", -7, 3)
+        -- Only write the value while dragging - applying it live (uiScale
+        -- calls self.ui.frame:SetScale, which changes the effective scale
+        -- of the very frame this slider lives in, and NotifyDataChanged's
+        -- RefreshSettingsPanel calls SetValue back on this same slider) both
+        -- fight the drag's own mouse-to-value tracking while the button is
+        -- still down - the frame visibly "sprang" back and forth. Applying
+        -- (SetScale/refresh) only happens once, on release.
         slider:SetScript("OnValueChanged", function(self, value)
             if panel.loading then return end
             if channel then SW.DB.settings[setting][channel] = value else SW.DB.settings[setting] = value end
+        end)
+        slider:SetScript("OnMouseUp", function(self)
+            if panel.loading then return end
             SW:NotifyDataChanged()
         end)
         panel.sliders[#panel.sliders + 1] = { slider = slider, setting = setting, channel = channel }
     end
-    addSlider("UIScale", "uiScale", nil, "Interface scale", -300, 0.75, 1.35, 0.05)
-    addSlider("ChatScale", "chatScale", nil, "Chat text scale", -346, 0.80, 1.35, 0.05)
+    addSlider("UIScale", "uiScale", nil, "Interface scale", 0.75, 1.35, 0.05)
+    addSlider("ChatScale", "chatScale", nil, "Chat text scale", 0.80, 1.35, 0.05)
 
     local styleHeading = text(content, "UI Style", "GameFontNormal")
-    styleHeading:SetPoint("TOPLEFT", 4, -388)
+    belowPrev(styleHeading, -2, 45)
     local styleHint = text(content, "Changing this applies after a UI reload.", "GameFontDisableSmall")
-    styleHint:SetPoint("TOPLEFT", 4, -410)
+    belowPrev(styleHint, 0, 4)
     local function themePill(themeKey, label)
         local pill = fitButton(button(content, label, 10, 22), 16)
         pill:SetScript("OnClick", function()
@@ -1875,7 +2032,7 @@ function SW:BuildSettingsPanel()
         return pill
     end
     panel.themeClassic = themePill("classic", "WoW Classic")
-    panel.themeClassic:SetPoint("TOPLEFT", 12, -432)
+    belowPrev(panel.themeClassic, 8, 10)
     panel.themeElvui = themePill("elvui", "ElvUI")
     panel.themeElvui:SetPoint("LEFT", panel.themeClassic, "RIGHT", 6, 0)
     panel.themeModern = themePill("modern", "Modern SaveWhispers")
@@ -1887,11 +2044,11 @@ function SW:BuildSettingsPanel()
     panel.reloadUI:SetScript("OnClick", function() ReloadUI() end)
 
     local dangerHeading = text(content, "Danger Zone", "GameFontNormal", 0.9, 0.3, 0.3)
-    dangerHeading:SetPoint("TOPLEFT", 4, -466)
+    belowPrev(dangerHeading, -6, 24)
     local dangerHint = text(content, "These permanently delete saved history - each asks for confirmation first.", "GameFontDisableSmall")
-    dangerHint:SetPoint("TOPLEFT", 4, -488)
+    belowPrev(dangerHint, 0, 4)
     panel.deleteDMs = fitButton(button(content, "Delete all DMs", 10, 22))
-    panel.deleteDMs:SetPoint("TOPLEFT", 12, -512)
+    belowPrev(panel.deleteDMs, 8, 14)
     panel.deleteDMs:SetScript("OnClick", function() StaticPopup_Show("SAVEWHISPERS_CONFIRM_DELETE_DMS") end)
     panel.deleteGuild = fitButton(button(content, "Delete Guild Chat", 10, 22))
     panel.deleteGuild:SetPoint("LEFT", panel.deleteDMs, "RIGHT", 6, 0)
@@ -1900,10 +2057,14 @@ function SW:BuildSettingsPanel()
     panel.deleteGroup:SetPoint("LEFT", panel.deleteGuild, "RIGHT", 6, 0)
     panel.deleteGroup:SetScript("OnClick", function() StaticPopup_Show("SAVEWHISPERS_CONFIRM_DELETE_GROUP") end)
     panel.deleteAll = fitButton(button(content, "Delete ALL chats", 10, 22))
-    panel.deleteAll:SetPoint("TOPLEFT", 12, -540)
+    belowPrev(panel.deleteAll, 8, 8)
     panel.deleteAll:SetScript("OnClick", function() StaticPopup_Show("SAVEWHISPERS_CONFIRM_DELETE_ALL") end)
 
-    content:SetSize(800, 588)
+    -- Taller than the visible sum of elements by design - the message-limit
+    -- rows now reserve real space for the native 32px checkbox (see the
+    -- TOPLEFT-anchoring fix above), which pushes everything below down
+    -- further than the old (overlapping) layout did.
+    content:SetSize(800, 1150)
 end
 
 function SW:RefreshSettingsPanel()
@@ -1912,17 +2073,24 @@ function SW:RefreshSettingsPanel()
     panel.enabled:SetChecked(self.DB.settings.enabled and true or false)
     panel.minimap:SetChecked(self.DB.settings.showMinimap and true or false)
     panel.sortByActivity:SetChecked(self.DB.settings.sortByActivity and true or false)
+    for _, entry in ipairs(panel.badgeChecks or {}) do
+        entry.box:SetChecked(self.DB.settings[entry.setting] and true or false)
+    end
     for _, entry in ipairs(panel.sliders) do
         local value = entry.channel and self.DB.settings[entry.setting][entry.channel] or self.DB.settings[entry.setting]
         entry.slider:SetValue(value or 0)
     end
-    local overLimit = false
     for _, entry in ipairs(panel.limitFields or {}) do
         local value = tonumber(self.DB.settings[entry.setting]) or entry.default
         if not entry.field:HasFocus() then entry.field:SetText(tostring(value)) end
-        if value > 1500 then overLimit = true end
     end
-    panel.limitWarning:SetText(overLimit and "Values above 1500 can slow down login/reload (larger saved file)." or "")
+    for _, entry in ipairs(panel.messageLimitFields or {}) do
+        local unlimited = self.DB.settings[entry.unlimitedSetting] and true or false
+        entry.unlimitedBox:SetChecked(unlimited)
+        local value = tonumber(self.DB.settings[entry.setting]) or entry.default
+        if not entry.field:HasFocus() then entry.field:SetText(tostring(value)) end
+        if unlimited then entry.field:Disable() else entry.field:Enable() end
+    end
     local currentTheme = self.DB.settings.uiTheme or "classic"
     for _, pill in ipairs({ panel.themeClassic, panel.themeElvui, panel.themeModern, panel.themeDragonflight }) do
         pill:UnlockHighlight()
@@ -1934,6 +2102,19 @@ function SW:RefreshSettingsPanel()
 end
 
 local CHANGELOG = {
+    {
+        version = "V1.2",
+        credit = "Developer: Gabbajoe",
+        entries = {
+            "Settings reorganized: \"Conversations & Sessions to Keep\" (DMs/Party-Raid/Channels) and \"Messages to Keep per Conversation\" (DMs/Guild/Party-Raid/Channels) are now separate, consistently named sections, each message-count limit has its own \"No limit\" option, and sort-by-recent-activity is on by default.",
+            "Settings now shows a brief \"Saved\" confirmation whenever a value is changed.",
+            "Choose which categories (DMs/Guild/Group/Channels) count toward the minimap button's unread badge.",
+            "Messages tab: added a Channels filter pill alongside All/DMs/Guild/Group.",
+            "Guild Chat: \"Load older messages\" button backfills history from Blizzard's own Guild & Communities data.",
+            "Fixed: chat text looked slightly blurry compared to the default chat frame at every Chat text scale setting.",
+            "Fixed: the Interface scale and Chat text scale sliders made the window visibly jump around while dragging.",
+        },
+    },
     {
         version = "V1.1",
         credit = "Developer: Gabbajoe",
