@@ -953,15 +953,6 @@ function SW:BuildMessagesPanel()
         end
         SW:ShowCopyPopup("Export - " .. conversation.name, table.concat(lines, "\n"))
     end)
-    -- Guild Chat is the one conversation type with real history sitting on
-    -- Blizzard's own servers (the Communities/Club system, separate from
-    -- CHAT_MSG_GUILD) - this pulls some of it in, merged with whatever
-    -- we've already recorded live.
-    panel.loadOlder = fitButton(button(panel.right, "Load older messages", 10, 22))
-    panel.loadOlder:SetScript("OnClick", function()
-        local conversation = SW:GetConversation(SW.ui.selectedKey)
-        if conversation then SW:LoadOlderGuildMessages(conversation) end
-    end)
     panel.star = iconButton(panel.right, "Interface\\TargetingFrame\\UI-RaidTargetingIcon_1", "Toggle watchlist favorite")
     panel.star:SetScript("OnClick", function() if SW.ui.selectedKey then SW:ToggleFavorite(SW.ui.selectedKey) end end)
     panel.pin = iconButton(panel.right, "Interface\\TargetingFrame\\UI-RaidTargetingIcon_3", "Pin to top of list")
@@ -1262,7 +1253,7 @@ function SW:RefreshChatPanel()
         panel.contactRealm:Hide()
         panel.statusDot:Hide(); panel.statusText:Hide()
         panel.star:Hide(); panel.pin:Hide(); panel.members:Hide(); panel.delete:Hide()
-        panel.copyName:Hide(); panel.exportChat:Hide(); panel.loadOlder:Hide()
+        panel.copyName:Hide(); panel.exportChat:Hide()
         panel.message:Hide(); panel.send:Hide()
         panel.chat:ClearAllPoints()
         panel.chat:SetPoint("TOPLEFT", 16, -64)
@@ -1293,7 +1284,6 @@ function SW:RefreshChatPanel()
     -- conversations, only for a real player DM.
     panel.copyName:SetShown(not conversation.system)
     panel.exportChat:Show()
-    panel.loadOlder:SetShown(conversation.system and conversation.channel == "guild")
     if conversation.system then
         panel.star:Hide(); panel.members:Show(); panel.pin:Show(); panel.statusDot:Hide(); panel.statusText:Hide()
         if conversation.channel == "channel" then
@@ -1341,7 +1331,7 @@ function SW:RefreshChatPanel()
     -- sharing the top row - with 6 buttons crammed against the right edge
     -- the row got long enough to run into the contact name on the left.
     flowRight(panel.right, -12, -10, 6, { panel.delete, panel.members, panel.pin, panel.star })
-    flowRight(panel.right, -12, -38, 6, { panel.exportChat, panel.copyName, panel.loadOlder })
+    flowRight(panel.right, -12, -38, 6, { panel.exportChat, panel.copyName })
     local width = math.max(340, panel.chat:GetWidth() - 5)
     local y = 0
     if conversation.members and #conversation.members > 0 then
@@ -2110,7 +2100,6 @@ local CHANGELOG = {
             "Settings now shows a brief \"Saved\" confirmation whenever a value is changed.",
             "Choose which categories (DMs/Guild/Group/Channels) count toward the minimap button's unread badge.",
             "Messages tab: added a Channels filter pill alongside All/DMs/Guild/Group.",
-            "Guild Chat: \"Load older messages\" button backfills history from Blizzard's own Guild & Communities data.",
             "Fixed: chat text looked slightly blurry compared to the default chat frame at every Chat text scale setting.",
             "Fixed: the Interface scale and Chat text scale sliders made the window visibly jump around while dragging.",
         },

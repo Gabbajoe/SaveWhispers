@@ -39,7 +39,6 @@ Open it with `/sw` or the movable minimap button.
 - Settings now shows a brief "Saved" confirmation whenever a value is changed.
 - Choose which categories (DMs/Guild/Group/Channels) count toward the minimap button's unread badge.
 - Messages tab: added a Channels filter pill alongside All/DMs/Guild/Group.
-- Guild Chat: "Load older messages" button backfills history from Blizzard's own Guild & Communities data.
 - Fixed: chat text looked slightly blurry compared to the default chat frame at every Chat text scale setting.
 - Fixed: the Interface scale and Chat text scale sliders made the window visibly jump around while dragging.
 

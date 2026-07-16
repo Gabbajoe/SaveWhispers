@@ -237,9 +237,6 @@ eventFrame:RegisterEvent("CHAT_MSG_CHANNEL")
 eventFrame:RegisterEvent("GROUP_JOINED")
 eventFrame:RegisterEvent("GROUP_LEFT")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
--- Fires when C_Club.RequestMoreMessagesBefore's requested data actually
--- arrives from the server - see SW:LoadOlderGuildMessages in Whispers.lua.
-if C_Club then eventFrame:RegisterEvent("CLUB_MESSAGE_HISTORY_LOADED") end
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_LOADED" then
         local loadedName = ...
@@ -270,11 +267,6 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     elseif SW.initialized and SW.DB.settings.enabled and event == "GROUP_LEFT" then
         SW:EndGroupSession("party")
         SW:EndGroupSession("raid")
-    elseif event == "CLUB_MESSAGE_HISTORY_LOADED" then
-        local clubId, streamId = ...
-        if SW.initialized and SW.HandleGuildMessageHistoryLoaded then
-            SW:HandleGuildMessageHistoryLoaded(clubId, streamId)
-        end
     elseif SW.initialized and SW.DB.settings.enabled and event == "GROUP_ROSTER_UPDATE" then
         -- Self-correcting fallback for a party promoted to a raid (or vice
         -- versa) without a clean GROUP_LEFT/GROUP_JOINED pair: relabel
