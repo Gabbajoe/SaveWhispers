@@ -193,6 +193,23 @@ function SW:StartGroupSession(kind)
     if existingKey and self.DB.groupChats[existingKey] then
         return self.DB.groupChats[existingKey]
     end
+    -- The player is only ever really in ONE group chat at a time - if the
+    -- OTHER kind already has a session open, this call is almost certainly
+    -- IsInRaid()/IsInParty() briefly misreporting right after a loading
+    -- screen or raid conversion (GROUP_JOINED firing again while the same
+    -- group session is still genuinely ongoing), not an actual new group.
+    -- Reuse the existing session instead of starting a competing one -
+    -- GROUP_ROSTER_UPDATE's ConvertGroupSession will relabel it if the kind
+    -- genuinely changes. Starting a second session here used to orphan the
+    -- first one mid-conversation the moment the new one got converted and
+    -- claimed the openRaidSessionKey/openPartySessionKey slot out from
+    -- under it, silently splitting one continuous raid's chat into
+    -- multiple fragments that all end at the same moment.
+    local otherDbKey = kind == "raid" and "openPartySessionKey" or "openRaidSessionKey"
+    local otherKey = self.DB[otherDbKey]
+    if otherKey and self.DB.groupChats[otherKey] then
+        return self.DB.groupChats[otherKey]
+    end
     local timestamp = self:Now()
     local key = kind .. ":" .. timestamp
     local label = (kind == "raid" and "Raid Chat - " or "Party Chat - ") .. date("%d.%m.%Y %H:%M", timestamp)
