@@ -1825,14 +1825,24 @@ function SW:BuildSettingsPanel()
     local heading = text(content, "Settings", "GameFontNormalLarge")
     heading:SetPoint("LEFT", icon, "RIGHT", 6, 1)
 
-    -- Every section below anchors to the bottom of the previous widget
-    -- instead of a hardcoded pixel offset, so inserting or resizing one
-    -- row can never again silently overlap the ones below it (see the
-    -- "Limits" overlap bug from earlier this session).
+    -- Every section below anchors its Y to the bottom of the previous
+    -- widget, so inserting or resizing one row can never again silently
+    -- overlap the ones below it (see the "Limits" overlap bug from earlier
+    -- this session). X is anchored separately, always relative to `content`
+    -- (a fixed reference) rather than to `prev` - anchoring X to prev too
+    -- was the actual bug that shipped: every small per-widget nudge (e.g.
+    -- the -2 used throughout for optical alignment) compounded across the
+    -- whole chain since each widget's already-drifted X became the next
+    -- one's reference, and rows whose `prev` became a widget positioned far
+    -- to the right (a field/checkbox anchored right of its own caption)
+    -- dragged every following section rightward with it. Two independent
+    -- SetPoint calls - one constrains Y only, the other X only - is the
+    -- standard WoW pattern for this and keeps the two fully decoupled.
     local prev = icon
     local function belowPrev(widget, x, gap)
         widget:ClearAllPoints()
-        widget:SetPoint("TOPLEFT", prev, "BOTTOMLEFT", x or 0, -(gap or 10))
+        widget:SetPoint("TOP", prev, "BOTTOM", 0, -(gap or 10))
+        widget:SetPoint("LEFT", content, "LEFT", x or 0, 0)
         prev = widget
         return widget
     end
