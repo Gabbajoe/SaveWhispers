@@ -671,7 +671,14 @@ function SW:CreateUI()
     if not parentWidth or parentWidth < 700 then parentWidth = 1200 end
     if not parentHeight or parentHeight < 500 then parentHeight = 900 end
     local maxWidth = math.max(700, parentWidth - 40)
-    local maxHeight = math.max(480, parentHeight - 40)
+    -- Capped well below "nearly full screen" on purpose, not just
+    -- math.max(480, parentHeight - 40) - reapplying the backdrop after a
+    -- resize (see the resize grip's OnMouseUp below) didn't fix a "void"
+    -- showing the game world through the bottom of the window at very
+    -- large sizes, and the tallest panel's own content (Settings) is only
+    -- ~1150px tall anyway, so a much bigger window was mostly just empty
+    -- scrollable space past that backdrop limitation regardless.
+    local maxHeight = math.max(480, math.min(parentHeight - 40, 1050))
     if frame.SetResizeBounds then
         frame:SetResizeBounds(700, 480, maxWidth, maxHeight)
     elseif frame.SetMinResize then
