@@ -2160,7 +2160,12 @@ function SW:RefreshSettingsPanel()
         entry.unlimitedBox:SetChecked(unlimited)
         local value = tonumber(self.DB.settings[entry.setting]) or entry.default
         if not entry.field:HasFocus() then entry.field:SetText(tostring(value)) end
-        if unlimited then entry.field:Disable() else entry.field:Enable() end
+        -- Disable() alone doesn't change how either theme's field looks -
+        -- native InputBoxTemplate and the flat themes' own backdrop colors
+        -- both stay fully lit regardless of enabled state. Alpha dims it
+        -- uniformly on any theme without needing per-theme color handling.
+        if unlimited then entry.field:Disable(); entry.field:SetAlpha(0.45)
+        else entry.field:Enable(); entry.field:SetAlpha(1) end
     end
     local currentTheme = self.DB.settings.uiTheme or "classic"
     for _, pill in ipairs({ panel.themeClassic, panel.themeElvui, panel.themeModern, panel.themeDragonflight }) do
