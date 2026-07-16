@@ -2001,7 +2001,7 @@ function SW:BuildSettingsPanel()
         field:SetScript("OnEditFocusLost", apply)
         unlimitedBox:SetScript("OnClick", function(self)
             SW.DB.settings[unlimitedSetting] = self:GetChecked() and true or false
-            flashSaved(field)
+            flashSaved(field, unlimitedLabel)
             SW:RefreshSettingsPanel()
         end)
         panel.messageLimitFields[#panel.messageLimitFields + 1] = {
@@ -2162,10 +2162,17 @@ function SW:RefreshSettingsPanel()
         if not entry.field:HasFocus() then entry.field:SetText(tostring(value)) end
         -- Disable() alone doesn't change how either theme's field looks -
         -- native InputBoxTemplate and the flat themes' own backdrop colors
-        -- both stay fully lit regardless of enabled state. Alpha dims it
-        -- uniformly on any theme without needing per-theme color handling.
-        if unlimited then entry.field:Disable(); entry.field:SetAlpha(0.45)
-        else entry.field:Enable(); entry.field:SetAlpha(1) end
+        -- both stay fully lit regardless of enabled state, and EditBox text
+        -- doesn't reliably dim from frame-level SetAlpha the way a plain
+        -- FontString would. Setting the text color directly is the only
+        -- thing that visibly shows on every theme.
+        if unlimited then
+            entry.field:Disable()
+            entry.field:SetTextColor(0.5, 0.5, 0.5)
+        else
+            entry.field:Enable()
+            entry.field:SetTextColor(unpack(currentTheme().textColor))
+        end
     end
     local currentTheme = self.DB.settings.uiTheme or "classic"
     for _, pill in ipairs({ panel.themeClassic, panel.themeElvui, panel.themeModern, panel.themeDragonflight }) do
