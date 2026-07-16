@@ -1294,7 +1294,17 @@ function SW:RefreshChatPanel()
     panel.copyName:SetShown(not conversation.system)
     panel.exportChat:Show()
     if conversation.system then
-        panel.star:Hide(); panel.members:Show(); panel.pin:Show(); panel.statusDot:Hide(); panel.statusText:Hide()
+        panel.star:Hide(); panel.statusDot:Hide(); panel.statusText:Hide()
+        -- Guild Chat is the one system conversation that's a fixed, single
+        -- entry rather than one of several (sessions, channels) - pinning
+        -- it to the top does nothing since it's always sorted first anyway,
+        -- and a members list here would just duplicate the default Guild
+        -- Roster window.
+        if conversation.channel == "guild" then
+            panel.pin:Hide(); panel.members:Hide()
+        else
+            panel.pin:Show(); panel.members:Show()
+        end
         if conversation.channel == "channel" then
             panel.delete:SetText("Remove")
             panel.delete:Show()
@@ -1613,6 +1623,14 @@ function SW:ShowMembers(conversation)
     if not conversation or not conversation.system then return end
     local frame = self:CreateMembersFrame()
     local members, names = {}, {}
+    -- Guild Chat's roster is always the player's actual current guild, so a
+    -- live online/offline check means something. A Party/Raid session's
+    -- member list is a roster captured back when that group existed - for
+    -- an old/closed session, querying the player's CURRENT group units
+    -- would show whoever they happen to be grouped with today (or nobody),
+    -- not the people who were actually in that session. Online/offline
+    -- doesn't mean anything for that, so this just lists the names.
+    local showState = conversation.channel == "guild"
     if conversation.channel == "guild" then
         if GuildRoster then GuildRoster() end
         local count = GetNumGuildMembers and GetNumGuildMembers() or 0
@@ -1622,17 +1640,8 @@ function SW:ShowMembers(conversation)
         end
     end
     if conversation.channel == "party" or conversation.channel == "raid" then
-        for _, unit in ipairs({ "player", "party1", "party2", "party3", "party4" }) do
-            if UnitExists and UnitExists(unit) then
-                local unitName = UnitName and UnitName(unit)
-                local state = UnitIsConnected and UnitIsConnected(unit) and "Online" or "Offline"
-                if (UnitIsAFK and UnitIsAFK(unit)) or (UnitIsDND and UnitIsDND(unit)) then state = "Busy" end
-                addMember(members, names, unitName, state)
-            end
-        end
-        for index = 1, 40 do
-            local unit = "raid" .. index
-            if UnitExists and UnitExists(unit) then addMember(members, names, UnitName(unit), "Online") end
+        for _, name in ipairs(conversation.members or {}) do
+            addMember(members, names, name, nil)
         end
     end
     for _, message in ipairs(conversation.messages or {}) do addMember(members, names, message.sender, nil) end
@@ -1661,9 +1670,16 @@ function SW:ShowMembers(conversation)
         row:ClearAllPoints()
         row:SetPoint("TOPLEFT", 0, y)
         row:SetSize(width, 28)
-        local stateColor = member.state == "Online" and { 0.20, 0.80, 0.38 } or (member.state == "Busy" and { 0.95, 0.75, 0.18 } or { 0.58, 0.60, 0.65 })
-        row.label:SetText(member.name .. "  (" .. member.state .. ")")
-        row.label:SetTextColor(unpack(stateColor))
+        if showState then
+            local stateColor = member.state == "Online" and { 0.20, 0.80, 0.38 } or (member.state == "Busy" and { 0.95, 0.75, 0.18 } or { 0.58, 0.60, 0.65 })
+            row.label:SetText(member.name .. "  (" .. member.state .. ")")
+            row.label:SetTextColor(unpack(stateColor))
+        else
+            -- Rows are pooled/reused - explicitly reset the color instead
+            -- of leaving whatever a previous (Guild) popup left behind.
+            row.label:SetText(member.name)
+            row.label:SetTextColor(0.9, 0.9, 0.9)
+        end
         y = y - 32
     end
     poolFinish(content)
