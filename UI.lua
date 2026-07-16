@@ -679,11 +679,17 @@ function SW:CreateUI()
     end
     frame:EnableMouse(true)
     frame:RegisterForDrag("LeftButton")
-    applyWindowBackdrop(frame)
     local saved = self.DB.window or {}
     if saved.width and saved.height then
         setPixelSize(frame, math.min(maxWidth, math.max(700, saved.width)), math.min(maxHeight, math.max(480, saved.height)))
     end
+    -- Applied after the saved size is restored, not before - the backdrop's
+    -- tiled background didn't reliably refresh on its own for a size change
+    -- this large (see the resize-grip OnMouseUp handler below for the same
+    -- fix), so applying it at whatever the frame's default pre-resize size
+    -- happened to be could leave the bottom of a large restored window
+    -- with no background at all until something else forced a redraw.
+    applyWindowBackdrop(frame)
     -- Always normalized to a TOPLEFT anchor (see normalizeTopLeft) - old
     -- saved positions from before this fix get normalized on load too.
     if saved.point then
@@ -728,6 +734,15 @@ function SW:CreateUI()
         local newWidth = math.min(frame:GetWidth(), maxWidth)
         local newHeight = math.min(frame:GetHeight(), maxHeight)
         setPixelSize(frame, newWidth, newHeight)
+        -- BackdropTemplateMixin is supposed to redraw its tiled background
+        -- automatically on every size change, but that didn't reliably keep
+        -- up with a large native drag-resize in practice - the tiled center
+        -- fill stopped covering the frame partway down while the border
+        -- itself kept stretching fine, leaving a "void" showing the game
+        -- world through the bottom of the window. Explicitly reapplying the
+        -- backdrop after the resize settles forces a full redraw at the
+        -- frame's actual current size.
+        applyWindowBackdrop(frame)
         local x, y = normalizeTopLeft(frame)
         local window = SW.DB.window or {}
         window.width, window.height = math.floor(newWidth + 0.5), math.floor(newHeight + 0.5)
