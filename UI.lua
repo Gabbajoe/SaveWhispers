@@ -1936,7 +1936,7 @@ end
 local CHANGELOG = {
     {
         version = "V1.1",
-        credit = "Co-Author: Gabbajoe",
+        credit = "Developer: Gabbajoe",
         entries = {
             "Native Blizzard window look (parchment/gold), pixel-perfect resizing and dragging.",
             "Raid Chat support, and Party/Raid history split into per-session conversations with a captured member list; switching between party and raid mid-session relabels it in place with a note instead of splitting the log.",
@@ -1959,7 +1959,7 @@ local CHANGELOG = {
     },
     {
         version = "V1.0",
-        credit = "Author: Femboybaddie",
+        credit = "Developer: Femboybaddie",
         entries = {
             "Persistent private, Guild, Party and selected channel histories.",
             "Chat colors, pins, member windows and a movable minimap button.",

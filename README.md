@@ -35,7 +35,7 @@ Open it with `/sw` or the movable minimap button.
 
 ## Changelog
 
-### V1.1 (Co-Author: Gabbajoe)
+### V1.1 (Developer: Gabbajoe)
 
 - Native Blizzard window look (parchment/gold), pixel-perfect resizing and dragging.
 - Raid Chat support, and Party/Raid history split into per-session conversations with a captured member list; switching between party and raid mid-session relabels it in place with a note instead of splitting the log.
@@ -55,7 +55,7 @@ Open it with `/sw` or the movable minimap button.
 - Fixed: a message box left focused could keep eating keystrokes (e.g. WASD) after closing the window or switching tabs.
 - Fixed: the Members popup could list yourself twice (once bare, once as "Name-Realm") - now deduped by base name, shown as "Name (Realm)" like everywhere else.
 
-### V1.0 (Author: Femboybaddie)
+### V1.0 (Developer: Femboybaddie)
 
 - Persistent private, Guild, Party and selected channel histories.
 - Chat colors, pins, member windows and a movable minimap button.
