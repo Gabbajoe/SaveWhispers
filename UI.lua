@@ -1061,10 +1061,41 @@ function SW:RefreshMessagesPanel()
         if conversation.key == self.ui.selectedKey then selectedInView = true; break end
     end
     if not selectedInView and conversations[1] then self.ui.selectedKey = conversations[1].key end
-    local maximum = math.max(1, math.floor(tonumber(self.DB.settings.maxConversations) or 200))
-    local dmCount = 0
-    for _ in pairs(self.DB.conversations or {}) do dmCount = dmCount + 1 end
-    panel.counter:SetText((self.ui.selectMode and "Select chats" or "Conversations") .. "  " .. dmCount .. "/" .. maximum)
+    -- The count/limit shown here matches whichever filter pill is active -
+    -- each category has its own separate "to keep" limit, so a single
+    -- fixed "Conversations X/200" that never changed with the filter was
+    -- showing the DM number even while looking at Guild/Group/Channels.
+    local counterText
+    if listFilter == "dm" then
+        local maximum = math.max(1, math.floor(tonumber(self.DB.settings.maxConversations) or 200))
+        local count = 0
+        for _ in pairs(self.DB.conversations or {}) do count = count + 1 end
+        counterText = "DM conversations  " .. count .. "/" .. maximum
+    elseif listFilter == "group" then
+        local maximum = math.max(1, math.floor(tonumber(self.DB.settings.maxGroupSessions) or 200))
+        local count = 0
+        for _, c in pairs(self.DB.groupChats or {}) do
+            if type(c) == "table" and (c.channel == "party" or c.channel == "raid") then count = count + 1 end
+        end
+        counterText = "Party/Raid sessions  " .. count .. "/" .. maximum
+    elseif listFilter == "channel" then
+        local maximum = math.max(1, math.floor(tonumber(self.DB.settings.maxChannels) or 50))
+        local count = 0
+        for _, c in pairs(self.DB.groupChats or {}) do
+            if type(c) == "table" and c.channel == "channel" then count = count + 1 end
+        end
+        counterText = "Channels  " .. count .. "/" .. maximum
+    elseif listFilter == "guild" then
+        -- Guild Chat is a single fixed conversation, not a "keep N of
+        -- these" category - there's no limit to show a count against.
+        counterText = "Guild Chat"
+    else
+        local maximum = math.max(1, math.floor(tonumber(self.DB.settings.maxConversations) or 200))
+        local count = 0
+        for _ in pairs(self.DB.conversations or {}) do count = count + 1 end
+        counterText = "Conversations  " .. count .. "/" .. maximum
+    end
+    panel.counter:SetText(self.ui.selectMode and "Select chats" or counterText)
     panel.select:SetText(self.ui.selectMode and "Done" or "Select")
     fitButton(panel.select)
     panel.addChannel:SetPoint("RIGHT", panel.select, "LEFT", -6, 0)
