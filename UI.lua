@@ -1064,36 +1064,34 @@ function SW:RefreshMessagesPanel()
     -- The count/limit shown here matches whichever filter pill is active -
     -- each category has its own separate "to keep" limit, so a single
     -- fixed "Conversations X/200" that never changed with the filter was
-    -- showing the DM number even while looking at Guild/Group/Channels.
+    -- showing the DM number even while looking at Guild/Group/Channels. On
+    -- "All", where no single limit applies, show all three at once instead.
+    local dmMax = math.max(1, math.floor(tonumber(self.DB.settings.maxConversations) or 200))
+    local dmCount = 0
+    for _ in pairs(self.DB.conversations or {}) do dmCount = dmCount + 1 end
+    local groupMax = math.max(1, math.floor(tonumber(self.DB.settings.maxGroupSessions) or 200))
+    local groupCount = 0
+    local channelMax = math.max(1, math.floor(tonumber(self.DB.settings.maxChannels) or 50))
+    local channelCount = 0
+    for _, c in pairs(self.DB.groupChats or {}) do
+        if type(c) == "table" then
+            if c.channel == "party" or c.channel == "raid" then groupCount = groupCount + 1
+            elseif c.channel == "channel" then channelCount = channelCount + 1 end
+        end
+    end
     local counterText
     if listFilter == "dm" then
-        local maximum = math.max(1, math.floor(tonumber(self.DB.settings.maxConversations) or 200))
-        local count = 0
-        for _ in pairs(self.DB.conversations or {}) do count = count + 1 end
-        counterText = "DM conversations  " .. count .. "/" .. maximum
+        counterText = "DM conversations  " .. dmCount .. "/" .. dmMax
     elseif listFilter == "group" then
-        local maximum = math.max(1, math.floor(tonumber(self.DB.settings.maxGroupSessions) or 200))
-        local count = 0
-        for _, c in pairs(self.DB.groupChats or {}) do
-            if type(c) == "table" and (c.channel == "party" or c.channel == "raid") then count = count + 1 end
-        end
-        counterText = "Party/Raid sessions  " .. count .. "/" .. maximum
+        counterText = "Party/Raid sessions  " .. groupCount .. "/" .. groupMax
     elseif listFilter == "channel" then
-        local maximum = math.max(1, math.floor(tonumber(self.DB.settings.maxChannels) or 50))
-        local count = 0
-        for _, c in pairs(self.DB.groupChats or {}) do
-            if type(c) == "table" and c.channel == "channel" then count = count + 1 end
-        end
-        counterText = "Channels  " .. count .. "/" .. maximum
+        counterText = "Channels  " .. channelCount .. "/" .. channelMax
     elseif listFilter == "guild" then
         -- Guild Chat is a single fixed conversation, not a "keep N of
         -- these" category - there's no limit to show a count against.
         counterText = "Guild Chat"
     else
-        local maximum = math.max(1, math.floor(tonumber(self.DB.settings.maxConversations) or 200))
-        local count = 0
-        for _ in pairs(self.DB.conversations or {}) do count = count + 1 end
-        counterText = "Conversations  " .. count .. "/" .. maximum
+        counterText = string.format("DM %d/%d   G/R %d/%d   Chan %d/%d", dmCount, dmMax, groupCount, groupMax, channelCount, channelMax)
     end
     panel.counter:SetText(self.ui.selectMode and "Select chats" or counterText)
     panel.select:SetText(self.ui.selectMode and "Done" or "Select")
