@@ -2037,34 +2037,42 @@ function SW:BuildSettingsPanel()
             if panel.loading then return end
             SW:NotifyDataChanged()
         end)
-        -- A visible tick at 100% (unscaled/normal), on a bare Low/High
-        -- track with no reference point it's easy to drag past without
-        -- noticing, and once past it there's no way back to exactly 100%
-        -- except luck - clicking the tick snaps straight back to it.
+        -- A ruler of small step notches along the track, plus a taller gold
+        -- tick at 100% (dead center now that callers pass a symmetric
+        -- min/max around 1.0) - purely visual, not interactive, so they
+        -- never get in the way of grabbing the thumb itself.
         local trackWidth = 250
+        local totalSteps = math.floor(((maximum or 1) - (minimum or 0)) / (step or 0.05) + 0.5)
+        for i = 0, totalSteps do
+            local notch = slider:CreateTexture(nil, "ARTWORK")
+            notch:SetColorTexture(1, 1, 1, 0.3)
+            notch:SetSize(1, 6)
+            notch:SetPoint("CENTER", slider, "LEFT", trackWidth * (i / totalSteps), -8)
+        end
         local tickFraction = (1 - (minimum or 0)) / ((maximum or 1) - (minimum or 0))
         local tick = slider:CreateTexture(nil, "OVERLAY")
         tick:SetColorTexture(1, 0.82, 0, 0.9)
-        tick:SetSize(2, 14)
-        tick:SetPoint("CENTER", slider, "LEFT", trackWidth * tickFraction, 0)
-        local tickButton = CreateFrame("Button", nil, slider)
-        tickButton:SetSize(10, 18)
-        tickButton:SetPoint("CENTER", tick, "CENTER", 0, 0)
-        tickButton:RegisterForClicks("LeftButtonUp")
-        tickButton:SetScript("OnClick", function()
+        tick:SetSize(2, 16)
+        tick:SetPoint("CENTER", slider, "LEFT", trackWidth * tickFraction, -1)
+        -- A real button beside the track instead of a hit-region sitting on
+        -- top of it - that made it hard to grab the thumb with the mouse
+        -- anywhere near the 100% mark.
+        local resetButton = fitButton(button(content, "Reset", 10, 20), 10)
+        resetButton:SetPoint("LEFT", slider, "RIGHT", 16, 0)
+        resetButton:SetScript("OnClick", function()
             slider:SetValue(1)
             SW:NotifyDataChanged()
         end)
-        tickButton:SetScript("OnEnter", function(self)
+        resetButton:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
-            GameTooltip:SetText("Click to reset to 100%")
+            GameTooltip:SetText("Reset to 100%")
             GameTooltip:Show()
         end)
-        tickButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        resetButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
         panel.sliders[#panel.sliders + 1] = { slider = slider, setting = setting, channel = channel }
     end
-    addSlider("UIScale", "uiScale", nil, "Interface scale", 0.75, 1.35, 0.05)
-    addSlider("ChatScale", "chatScale", nil, "Chat text scale", 0.80, 1.35, 0.05)
+    addSlider("UIScale", "uiScale", nil, "Interface scale", 0.70, 1.30, 0.05)
+    addSlider("ChatScale", "chatScale", nil, "Chat text scale", 0.70, 1.30, 0.05)
 
     local styleHeading = text(content, "UI Style", "GameFontNormal")
     belowPrev(styleHeading, -2, 45)
