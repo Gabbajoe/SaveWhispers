@@ -1801,12 +1801,11 @@ StaticPopupDialogs["SAVEWHISPERS_CONFIRM_DELETE_GROUP"] = {
 -- anchorWidget lets a caller put the "Saved" text somewhere other than
 -- directly right of the field itself - the message-limit rows also have a
 -- "No limit" checkbox+label sitting right there, and the text used to land
--- on top of/behind them. below anchors it under the field instead of to
--- the right entirely - some rows (e.g. "DM conversations to keep") have
--- another field's caption sitting immediately to the right with no gap at
--- all, so "right of X" has nowhere safe to go regardless of X.
-local function flashSaved(field, anchorWidget, below)
-    anchorWidget = anchorWidget or field
+-- on top of/behind them. Pass anchorWidget = false to skip the text
+-- entirely and flash only the border - some rows (the two-per-row count
+-- fields) have no free space on any side: a sibling field's caption sits
+-- immediately right with no gap, and directly below is the next row.
+local function flashSaved(field, anchorWidget)
     if not field.savedText then
         field.savedText = text(field:GetParent(), "Saved", "GameFontDisableSmall", 0.35, 0.85, 0.35)
         field.savedText:Hide()
@@ -1817,13 +1816,13 @@ local function flashSaved(field, anchorWidget, below)
         field.savedBorder:SetBackdropBorderColor(0.35, 0.85, 0.35, 1)
         field.savedBorder:Hide()
     end
-    field.savedText:ClearAllPoints()
-    if below then
-        field.savedText:SetPoint("TOPLEFT", anchorWidget, "BOTTOMLEFT", 0, -2)
+    if anchorWidget == false then
+        field.savedText:Hide()
     else
-        field.savedText:SetPoint("LEFT", anchorWidget, "RIGHT", 8, 0)
+        field.savedText:ClearAllPoints()
+        field.savedText:SetPoint("LEFT", anchorWidget or field, "RIGHT", 8, 0)
+        field.savedText:Show()
     end
-    field.savedText:Show()
     field.savedBorder:Show()
     C_Timer.After(1.5, function()
         if field.savedText then field.savedText:Hide() end
@@ -1942,10 +1941,11 @@ function SW:BuildSettingsPanel()
             value = math.floor(value)
             SW.DB.settings[setting] = value
             field:ClearFocus()
-            -- Below, not to the right - "DM conversations to keep" has
-            -- "Party/Raid sessions to keep" sitting immediately right of
-            -- its field with no gap, so the text landed on top of it.
-            flashSaved(field, nil, true)
+            -- Border flash only, no text - these fields sit two-per-row
+            -- with no free space on any side (a sibling field's caption
+            -- immediately right, the next row immediately below), so any
+            -- text placement landed on top of something.
+            flashSaved(field, false)
             SW:RefreshSettingsPanel()
         end
         field:SetScript("OnEnterPressed", apply)
