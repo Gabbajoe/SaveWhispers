@@ -1,11 +1,12 @@
 ## Interface: 11508
-## Title: SaveWhispers v1.1 |cffef4f91SW|r
+## Title: SaveWhispers v1.2 |cffef4f91SW|r
 ## Notes: A private, persistent whisper inbox for World of Warcraft Classic.
 ## Author: SaveWhispers, Gabbajoe
 ## Version: 1.2
 ## SavedVariables: SaveWhispersDB
 ## X-Category: Chat
 ## X-Flavor: Vanilla
+## X-Curse-Project-ID: 1607146
 
 Core.lua
 Database.lua
