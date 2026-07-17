@@ -31,18 +31,31 @@ function SW:MessageLimitFor(kind)
     return math.max(50, math.floor(tonumber(settings[valueKey]) or 1500))
 end
 
+-- A loop, not a single trim: if the cap was only just lowered (or a
+-- conversation grew past it before this limit existed), a single
+-- table.remove only ever peels off one message per incoming message, so it
+-- can take hundreds of new messages to actually shrink back down. Skips
+-- bookmarked messages rather than assuming index 1 is always safe to drop -
+-- a bookmark means "never auto-delete this", mirroring how
+-- SW:RemoveOldestConversation already skips favorited conversations. If
+-- everything left is bookmarked the cap simply can't be honored - breaks
+-- out instead of spinning forever.
+function SW:TrimMessages(messages, cap)
+    if not cap then return end
+    while #messages > cap do
+        local removeIndex = 1
+        while messages[removeIndex] and messages[removeIndex].bookmarked do
+            removeIndex = removeIndex + 1
+        end
+        if not messages[removeIndex] then break end
+        table.remove(messages, removeIndex)
+    end
+end
+
 local function appendMessage(conversation, message, cap)
     local messages = conversation.messages
     messages[#messages + 1] = message
-    -- A loop, not a single trim: if the cap was only just lowered (or a
-    -- conversation grew past it before this limit existed), a single
-    -- table.remove only ever peels off one message per incoming message,
-    -- so it can take hundreds of new messages to actually shrink back down.
-    if cap then
-        while #messages > cap do
-            table.remove(messages, 1)
-        end
-    end
+    SW:TrimMessages(messages, cap)
 end
 
 function SW:GetConversation(key)
@@ -146,10 +159,17 @@ function SW:EnsureConversation(name)
     return conversation
 end
 
+-- Party and Raid share the same order tier on purpose: the sort compares
+-- order BEFORE lastActivity (see GetSortedConversations), so giving raid
+-- a higher number than party used to force every party session above every
+-- raid session regardless of which was actually more recent - "sort by
+-- activity" only applied within each of those two groups separately,
+-- not across them, which looked like a mis-sorted list once someone had
+-- both kinds of sessions going.
 local GROUP_DEFAULTS = {
     guild = { name = "Guild Chat", order = 1 },
     party = { name = "Party Chat", order = 2 },
-    raid = { name = "Raid Chat", order = 3 },
+    raid = { name = "Raid Chat", order = 2 },
 }
 
 function SW:EnsureGroupConversation(key, displayName, chatType, order)
@@ -213,7 +233,7 @@ function SW:StartGroupSession(kind)
     local timestamp = self:Now()
     local key = kind .. ":" .. timestamp
     local label = (kind == "raid" and "Raid Chat - " or "Party Chat - ") .. date("%d.%m.%Y %H:%M", timestamp)
-    local order = kind == "raid" and 3 or 2
+    local order = 2 -- party and raid share a tier; see GROUP_DEFAULTS comment
     local conversation = self:EnsureGroupConversation(key, label, kind, order)
     conversation.lastActivity = timestamp
     local members = {}
@@ -254,7 +274,7 @@ function SW:ConvertGroupSession(fromKind, toKind)
     local conversation = key and self.DB.groupChats[key]
     if not conversation then return end
     conversation.channel = toKind
-    conversation.order = toKind == "raid" and 3 or 2
+    conversation.order = 2 -- party and raid share a tier; see GROUP_DEFAULTS comment
     local suffix = string.match(conversation.name, "%-%s*(.+)$") or date("%d.%m.%Y %H:%M", self:Now())
     conversation.name = (toKind == "raid" and "Raid Chat - " or "Party Chat - ") .. suffix
     appendMessage(conversation, {
@@ -475,6 +495,64 @@ function SW:ToggleFavorite(key)
     if not conversation then return end
     conversation.favorite = not conversation.favorite
     self:NotifyDataChanged()
+end
+
+-- Takes the conversation/message objects directly rather than a key+index
+-- lookup - every call site already has both in hand when the user clicks
+-- the bookmark icon on a specific rendered message.
+function SW:ToggleMessageBookmark(conversation, message)
+    if not conversation or not message then return end
+    message.bookmarked = not message.bookmarked
+    self:NotifyDataChanged()
+end
+
+-- Shared by the Bookmarks tab and global search - walks every conversation
+-- (DMs + Guild/Party/Raid/channel sessions) and every message in each,
+-- calling match(conversation, message) for each one. Collects whatever
+-- match() returns into a flat list, sorted newest-first.
+local function collectMatchingMessages(self, match)
+    local results = {}
+    for _, conversation in pairs(self.DB.conversations or {}) do
+        if type(conversation) == "table" and type(conversation.messages) == "table" then
+            for _, message in ipairs(conversation.messages) do
+                local entry = match(conversation, message)
+                if entry then results[#results + 1] = entry end
+            end
+        end
+    end
+    for _, conversation in pairs(self.DB.groupChats or {}) do
+        if type(conversation) == "table" and type(conversation.messages) == "table" then
+            for _, message in ipairs(conversation.messages) do
+                local entry = match(conversation, message)
+                if entry then results[#results + 1] = entry end
+            end
+        end
+    end
+    table.sort(results, function(a, b) return (a.message.timestamp or 0) > (b.message.timestamp or 0) end)
+    return results
+end
+
+function SW:GetBookmarkedMessages()
+    return collectMatchingMessages(self, function(conversation, message)
+        if message.bookmarked then
+            return { conversation = conversation, message = message }
+        end
+        return nil
+    end)
+end
+
+-- Case-insensitive substring match on message text - system notes are
+-- excluded, searching your own "-- Group was converted to a raid. --"
+-- style markers isn't useful.
+function SW:SearchAllMessages(searchText)
+    searchText = string.lower(SW:Trim(searchText or ""))
+    if searchText == "" then return {} end
+    return collectMatchingMessages(self, function(conversation, message)
+        if not message.system and message.text and string.find(string.lower(message.text), searchText, 1, true) then
+            return { conversation = conversation, message = message }
+        end
+        return nil
+    end)
 end
 
 function SW:DeleteConversation(key)

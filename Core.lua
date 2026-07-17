@@ -5,7 +5,7 @@ _G.SaveWhispers = SW
 
 SW.name = "SaveWhispers"
 SW.shortName = "SW"
-SW.version = "1.2"
+SW.version = "1.3"
 SW.addonName = ADDON_NAME or "SaveWhispers"
 SW.BackdropTemplate = BackdropTemplateMixin and "BackdropTemplate" or nil
 SW.initialized = false
@@ -141,22 +141,13 @@ function SW:InitDatabase()
     -- time this actually runs (PLAYER_LOGIN, not file-load order).
     for _, conversation in pairs(self.DB.groupChats) do
         if type(conversation) == "table" and type(conversation.messages) == "table" then
-            local cap = self:MessageLimitFor(conversation.channel)
-            if cap then
-                while #conversation.messages > cap do
-                    table.remove(conversation.messages, 1)
-                end
-            end
+            self:TrimMessages(conversation.messages, self:MessageLimitFor(conversation.channel))
         end
     end
     local dmCap = self:MessageLimitFor("dm")
-    if dmCap then
-        for _, conversation in pairs(self.DB.conversations) do
-            if type(conversation) == "table" and type(conversation.messages) == "table" then
-                while #conversation.messages > dmCap do
-                    table.remove(conversation.messages, 1)
-                end
-            end
+    for _, conversation in pairs(self.DB.conversations) do
+        if type(conversation) == "table" and type(conversation.messages) == "table" then
+            self:TrimMessages(conversation.messages, dmCap)
         end
     end
 end
@@ -189,6 +180,20 @@ function SW:Initialize()
     if self.initialized then return end
     self.initialized = true
     self:InitDatabase()
+    -- SavedVariables here are account-wide (shared by every character on
+    -- the account), but an "open" Party/Raid session is inherently
+    -- per-character - logging out mid-session on one character and then
+    -- logging into a different one left openPartySessionKey/
+    -- openRaidSessionKey still pointing at the first character's session,
+    -- silently grafting the second character's unrelated group chat onto
+    -- the end of it. Clear them whenever the logged-in character doesn't
+    -- match whoever had them open last.
+    local currentCharacter = (UnitName and UnitName("player") or "?") .. "-" .. (GetRealmName and GetRealmName() or "?")
+    if self.DB.lastActiveCharacter ~= currentCharacter then
+        self.DB.openPartySessionKey = nil
+        self.DB.openRaidSessionKey = nil
+        self.DB.lastActiveCharacter = currentCharacter
+    end
     local ok, err = pcall(function() self:CreateUI() end)
     if not ok then
         self:Print("|cffff4444The window failed to load:|r " .. tostring(err))

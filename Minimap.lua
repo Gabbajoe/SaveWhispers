@@ -1,5 +1,4 @@
 local SW = _G.SaveWhispers
-local ICON = "Interface\\AddOns\\SaveWhispers\\assets\\savewhispers_minimap"
 
 local function place(button)
     local angle = math.rad(SW.DB.minimap.minimapPos or 220)
@@ -42,7 +41,9 @@ function SW:CreateMinimapButton()
         button.icon:SetSize(20, 20)
         button.icon:SetPoint("TOPLEFT", 7, -6)
     end
-    button.icon:SetTexture(ICON)
+    -- Theme-matched logo (classic envelope vs. flat bubble) - see
+    -- SW:BrandIconPath in UI.lua, shared with the window title icon.
+    button.icon:SetTexture(SW:BrandIconPath("minimap"))
     button.icon:SetTexCoord(0, 1, 0, 1)
     if not button.border then
         -- The gold ring every other minimap button has (Blizzard's own

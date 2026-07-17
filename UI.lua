@@ -1,12 +1,22 @@
 local SW = _G.SaveWhispers
 local BACKDROP = SW.BackdropTemplate
-local ICON = "Interface\\AddOns\\SaveWhispers\\assets\\savewhispers_icon"
+
+-- The logo follows the selected UI Style: a painted parchment envelope
+-- with wax seal for classic, a flat envelope in the theme's own palette
+-- for each flat theme. Shared with Minimap.lua as a method so both the
+-- window title and the minimap button pick the same variant.
+local BRAND_ICON_VARIANTS = { classic = true, elvui = true, modern = true, dragonflight = true }
+function SW:BrandIconPath(kind)
+    local theme = self.DB and self.DB.settings and self.DB.settings.uiTheme
+    local variant = BRAND_ICON_VARIANTS[theme] and theme or "classic"
+    return "Interface\\AddOns\\SaveWhispers\\assets\\savewhispers_" .. (kind or "icon") .. "_" .. variant
+end
 
 -- How many of a conversation's most recent messages actually get rendered
 -- as widgets per refresh. Stored history can be far larger (up to
 -- maxGroupMessages, e.g. 1500 for a busy Guild Chat) - rendering all of it
 -- every time is what caused the window-open stutter. Full history is still
--- available in full via "Export chat".
+-- available in full via "Export Chat".
 local MAX_RENDERED_MESSAGES = 200
 
 -- Chat text scale used to call SetTextHeight(px), which scales the glyphs
@@ -49,7 +59,11 @@ local THEMES = {
     elvui = {
         useNativeWidgets = false,
         windowBackdropColor = { 0.045, 0.045, 0.045, 0.98 },
-        windowBorderColor = { 0.16, 0.16, 0.16, 1 },
+        -- ElvUI's own orange accent (same hue as accentColor below), not a
+        -- flat gray - Modern and Dragonflight both border the window in
+        -- their own theme color, gray here read as an unstyled leftover
+        -- edge rather than a deliberate border.
+        windowBorderColor = { 0.85, 0.55, 0.1, 1 },
         insetBackdropColor = { 0.07, 0.07, 0.07, 0.9 },
         insetBorderColor = { 0.16, 0.16, 0.16, 1 },
         buttonColor = { 0.09, 0.09, 0.09, 1 },
@@ -311,7 +325,17 @@ local function edit(parent, width, height, hint, getSuggestions)
                 local row = dropdown.rows[i]
                 if not row then
                     row = CreateFrame("Button", nil, dropdown)
-                    row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+                    -- Same theme-aware hover treatment as the conversation
+                    -- list rows - gold gradient only on the classic theme.
+                    local rowTheme = currentTheme()
+                    if rowTheme.useNativeWidgets then
+                        row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+                    else
+                        local a = rowTheme.accentColor
+                        row:SetHighlightTexture("Interface\\Buttons\\WHITE8X8")
+                        local hover = row:GetHighlightTexture()
+                        if hover then hover:SetVertexColor(a[1], a[2], a[3], 0.14) end
+                    end
                     row.label = text(row, "", "GameFontHighlightSmall")
                     row.label:SetPoint("LEFT", 6, 0)
                     row.label:SetWidth(dropdownWidth - 12)
@@ -364,6 +388,7 @@ local function numberField(parent, width, height)
     field:SetFontObject("ChatFontNormal")
     field:SetAutoFocus(false)
     field:SetNumeric(true)
+    field:SetJustifyH("RIGHT")
     field:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
     return field
 end
@@ -633,13 +658,44 @@ local function scroll(parent)
                 thumb:SetColorTexture(theme.buttonBorderColor[1], theme.buttonBorderColor[2], theme.buttonBorderColor[3], 1)
                 thumb:SetWidth(10)
             end
+            -- The up/down arrow buttons are unmistakably Classic art -
+            -- recoloring them still read as "old icons, tinted" against
+            -- the flat themes. Strip the template's four state textures
+            -- entirely (they size/anchor inconsistently between the up and
+            -- down buttons - resizing them still rendered the two arrows
+            -- at different sizes) and draw one owned glyph per button
+            -- instead, with the state handling (hover/disabled tint) done
+            -- by hand via hooks.
+            local arrowTexture = "Interface\\AddOns\\SaveWhispers\\assets\\savewhispers_arrow"
+            local c = theme.buttonBorderColor
             for _, buttonName in ipairs({ "ScrollUpButton", "ScrollDownButton" }) do
                 local scrollButton = _G[name .. "ScrollBar" .. buttonName]
                 if scrollButton then
                     for _, getter in ipairs({ "GetNormalTexture", "GetPushedTexture", "GetDisabledTexture", "GetHighlightTexture" }) do
-                        local layer = scrollButton[getter] and scrollButton[getter](scrollButton)
-                        if layer then layer:SetVertexColor(theme.buttonBorderColor[1], theme.buttonBorderColor[2], theme.buttonBorderColor[3]) end
+                        local tex = scrollButton[getter] and scrollButton[getter](scrollButton)
+                        if tex then
+                            tex:SetTexture(nil)
+                        end
                     end
+                    local glyph = scrollButton:CreateTexture(nil, "OVERLAY")
+                    glyph:SetTexture(arrowTexture)
+                    glyph:SetSize(13, 13)
+                    glyph:SetPoint("CENTER")
+                    if buttonName == "ScrollDownButton" then glyph:SetTexCoord(0, 1, 1, 0) end
+                    local function applyState()
+                        if not scrollButton:IsEnabled() then
+                            glyph:SetVertexColor(c[1], c[2], c[3], 0.25)
+                        elseif scrollButton.swHover then
+                            glyph:SetVertexColor(math.min(1, c[1] * 1.4), math.min(1, c[2] * 1.4), math.min(1, c[3] * 1.4), 1)
+                        else
+                            glyph:SetVertexColor(c[1], c[2], c[3], 0.9)
+                        end
+                    end
+                    scrollButton:HookScript("OnEnter", function(self) self.swHover = true; applyState() end)
+                    scrollButton:HookScript("OnLeave", function(self) self.swHover = nil; applyState() end)
+                    scrollButton:HookScript("OnDisable", applyState)
+                    scrollButton:HookScript("OnEnable", applyState)
+                    applyState()
                 end
             end
         end
@@ -667,28 +723,35 @@ function SW:CreateUI()
     frame:SetClampedToScreen(true)
     frame:SetMovable(true)
     frame:SetResizable(true)
-    local parentWidth, parentHeight = UIParent:GetWidth(), UIParent:GetHeight()
-    if not parentWidth or parentWidth < 700 then parentWidth = 1200 end
-    if not parentHeight or parentHeight < 500 then parentHeight = 900 end
-    local maxWidth = math.max(700, parentWidth - 40)
-    -- Capped well below "nearly full screen" on purpose, not just
-    -- math.max(480, parentHeight - 40) - reapplying the backdrop after a
-    -- resize (see the resize grip's OnMouseUp below) didn't fix a "void"
-    -- showing the game world through the bottom of the window at very
-    -- large sizes, and the tallest panel's own content (Settings) is only
-    -- ~1150px tall anyway, so a much bigger window was mostly just empty
-    -- scrollable space past that backdrop limitation regardless.
-    local maxHeight = math.max(480, math.min(parentHeight - 40, 1050))
-    if frame.SetResizeBounds then
-        frame:SetResizeBounds(700, 480, maxWidth, maxHeight)
-    elseif frame.SetMinResize then
-        frame:SetMinResize(700, 480)
+    -- Resize bounds are in the frame's OWN coordinate space, but the frame
+    -- is scaled by the Interface scale setting (SetScale in RefreshUI) - a
+    -- fixed "parentHeight - 40" bound left a scale-dependent dead margin
+    -- the window could never grow into (reported as "can't maximize, a
+    -- strip of screen always stays uncovered"). Dividing by the current
+    -- scale converts screen space to frame space, and recomputing on every
+    -- scale change (RefreshUI calls this) keeps it correct after the
+    -- Interface scale slider moves.
+    local function updateResizeBounds()
+        local parentWidth, parentHeight = UIParent:GetWidth(), UIParent:GetHeight()
+        if not parentWidth or parentWidth < 700 then parentWidth = 1200 end
+        if not parentHeight or parentHeight < 500 then parentHeight = 900 end
+        local scale = frame:GetScale() or 1
+        if scale <= 0 then scale = 1 end
+        frame.maxResizeWidth = math.max(700, parentWidth / scale)
+        frame.maxResizeHeight = math.max(480, parentHeight / scale)
+        if frame.SetResizeBounds then
+            frame:SetResizeBounds(700, 480, frame.maxResizeWidth, frame.maxResizeHeight)
+        elseif frame.SetMinResize then
+            frame:SetMinResize(700, 480)
+        end
     end
+    frame.UpdateResizeBounds = updateResizeBounds
+    updateResizeBounds()
     frame:EnableMouse(true)
     frame:RegisterForDrag("LeftButton")
     local saved = self.DB.window or {}
     if saved.width and saved.height then
-        setPixelSize(frame, math.min(maxWidth, math.max(700, saved.width)), math.min(maxHeight, math.max(480, saved.height)))
+        setPixelSize(frame, math.min(frame.maxResizeWidth, math.max(700, saved.width)), math.min(frame.maxResizeHeight, math.max(480, saved.height)))
     end
     -- Applied after the saved size is restored, not before - the backdrop's
     -- tiled background didn't reliably refresh on its own for a size change
@@ -716,30 +779,55 @@ function SW:CreateUI()
     end)
     frame:Hide()
     self.ui.frame = frame
+    -- Lets Escape close this window like every other Blizzard/addon frame -
+    -- without being listed here, Escape falls through to WoW's own "open
+    -- the game menu" default instead of closing the topmost UI panel.
+    tinsert(UISpecialFrames, "SaveWhispersFrame")
 
     local resize = CreateFrame("Button", nil, frame)
     resize:SetSize(18, 18)
     resize:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -6, 6)
-    resize.texture = resize:CreateTexture(nil, "ARTWORK")
-    resize.texture:SetAllPoints()
-    resize.texture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
-    -- SetTexture resets any vertex tint back to white, so the flat themes'
-    -- recolor has to be re-applied after every texture swap (hover in/out),
-    -- not just once at creation.
     local resizeTheme = currentTheme()
-    local function tintResizeGrip()
-        if not resizeTheme.useNativeWidgets then
-            resize.texture:SetVertexColor(resizeTheme.buttonBorderColor[1], resizeTheme.buttonBorderColor[2], resizeTheme.buttonBorderColor[3])
-        end
+    if resizeTheme.useNativeWidgets then
+        resize.texture = resize:CreateTexture(nil, "ARTWORK")
+        resize.texture:SetAllPoints()
+        resize.texture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+        resize:SetScript("OnEnter", function(self) self.texture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down") end)
+        resize:SetScript("OnLeave", function(self) self.texture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up") end)
+    else
+        -- The Classic size-grabber art read as "old icon, tinted" on the
+        -- flat themes - use the addon's own grip glyph instead (three
+        -- diagonal lines, white-on-transparent, tinted to the theme).
+        -- A pre-drawn texture, NOT SetRotation on a solid-color bar:
+        -- SetRotation only rotates texture coordinates within the same
+        -- axis-aligned quad, which is invisible on a solid color - the
+        -- first attempt at this rendered as a plain horizontal streak.
+        local c = resizeTheme.buttonBorderColor
+        resize.texture = resize:CreateTexture(nil, "ARTWORK")
+        resize.texture:SetAllPoints()
+        resize.texture:SetTexture("Interface\\AddOns\\SaveWhispers\\assets\\savewhispers_grip")
+        resize.texture:SetVertexColor(c[1], c[2], c[3], 0.9)
+        resize:SetScript("OnEnter", function(self)
+            self.texture:SetVertexColor(math.min(1, c[1] * 1.4), math.min(1, c[2] * 1.4), math.min(1, c[3] * 1.4), 1)
+        end)
+        resize:SetScript("OnLeave", function(self)
+            self.texture:SetVertexColor(c[1], c[2], c[3], 0.9)
+        end)
     end
-    tintResizeGrip()
-    resize:SetScript("OnEnter", function(self) self.texture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down"); tintResizeGrip() end)
-    resize:SetScript("OnLeave", function(self) self.texture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up"); tintResizeGrip() end)
+    -- NOT calling frame.UpdateResizeBounds() here (a previous fix attempt
+    -- did) - SetResizeBounds turns out to immediately re-clamp the frame's
+    -- CURRENT size into the [min,max] range as a side effect of being
+    -- called, and calling it fresh on every single click was snapping the
+    -- window down to the minimum (700x480) right away, confirmed via a
+    -- debug print showing the frame already at exactly 700x480 before
+    -- StartSizing even ran. Bounds are still kept fresh via CreateUI and
+    -- every RefreshUI (uiScale changes, UIParent resizing) - just not
+    -- re-applied on every mouse click.
     resize:SetScript("OnMouseDown", function() frame:StartSizing("BOTTOMRIGHT") end)
     resize:SetScript("OnMouseUp", function()
         frame:StopMovingOrSizing()
-        local newWidth = math.min(frame:GetWidth(), maxWidth)
-        local newHeight = math.min(frame:GetHeight(), maxHeight)
+        local newWidth = math.min(frame:GetWidth(), frame.maxResizeWidth or math.huge)
+        local newHeight = math.min(frame:GetHeight(), frame.maxResizeHeight or math.huge)
         setPixelSize(frame, newWidth, newHeight)
         -- BackdropTemplateMixin is supposed to redraw its tiled background
         -- automatically on every size change, but that didn't reliably keep
@@ -770,7 +858,7 @@ function SW:CreateUI()
     local icon = frame:CreateTexture(nil, "ARTWORK")
     icon:SetPoint("TOPLEFT", 18, -14)
     icon:SetSize(36, 36)
-    icon:SetTexture(ICON)
+    icon:SetTexture(SW:BrandIconPath("icon"))
     local title = text(frame, "SaveWhispers", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", icon, "TOPRIGHT", 10, -4)
     local subtitle = text(frame, "Your saved private messages", "GameFontDisableSmall")
@@ -784,7 +872,7 @@ function SW:CreateUI()
     tabBar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -46, -22)
     tabBar:SetHeight(20)
     self.ui.tabs = {}
-    local tabNames = { "Messages", "Watchlist", "Settings", "Changelog" }
+    local tabNames = { "Messages", "Watchlist", "Bookmarks", "Settings", "Changelog" }
     local previous
     for i = #tabNames, 1, -1 do
         local tabName = tabNames[i]
@@ -797,12 +885,17 @@ function SW:CreateUI()
         previous = tab
     end
 
+    -- 12px, not the old 18px sides/62px top - roughly halves the dead
+    -- margin around the tab content. 12 is the floor for the classic
+    -- theme: the parchment dialog border art's insets are 11-12px, any
+    -- tighter and the content boxes slide under the border.
     local content = CreateFrame("Frame", nil, frame)
-    content:SetPoint("TOPLEFT", frame, "TOPLEFT", 18, -62)
-    content:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -18, 18)
+    content:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -54)
+    content:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -12, 12)
     self.ui.content = content
     self:BuildMessagesPanel()
     self:BuildWatchlistPanel()
+    self:BuildBookmarksPanel()
     self:BuildSettingsPanel()
     self:BuildChangelogPanel()
     self:SwitchTab("Messages")
@@ -825,6 +918,7 @@ function SW:ClearInputFocus()
     if messages then
         if messages.message then messages.message:ClearFocus() end
         if messages.target then messages.target:ClearFocus() end
+        if messages.chatSearch then messages.chatSearch:ClearFocus() end
     end
     local watchlist = self.ui and self.ui.panels and self.ui.panels.Watchlist
     if watchlist and watchlist.addName then watchlist.addName:ClearFocus() end
@@ -867,7 +961,7 @@ function SW:BuildMessagesPanel()
     -- and list below), not chained off "Select"'s left side - otherwise
     -- the whole row's left extent drifted with "Select"/"Done"'s width,
     -- landing it out of line with everything else in the column.
-    panel.addChannel = fitButton(button(panel.left, "+ Add channel", 10, 22))
+    panel.addChannel = fitButton(button(panel.left, "Add Channel", 10, 22))
     panel.addChannel:SetPoint("TOPLEFT", 12, -34)
     -- "Open" is pinned to the same -30 right edge as "Select"/the list
     -- below, instead of floating off the input field's width - otherwise
@@ -878,9 +972,18 @@ function SW:BuildMessagesPanel()
     panel.target = edit(panel.left, 140, 22, "Player/Channel", function(value) return SW:GetNameSuggestions(value) end)
     panel.target:SetPoint("TOPLEFT", 12, -62)
     panel.target:SetPoint("RIGHT", panel.add, "LEFT", -6, 0)
+    -- "Select" and "Open" auto-fit to different label widths, which put
+    -- the right edge of "Add Channel" (stretched to Select) and of the
+    -- Player/Channel field (stretched to Open) on different X positions -
+    -- the two rows visibly out of line with each other. One shared width
+    -- (the wider of the two) keeps both rows' columns flush.
+    local rightColumnWidth = math.max(panel.select:GetWidth(), panel.add:GetWidth())
+    panel.select:SetWidth(rightColumnWidth)
+    panel.add:SetWidth(rightColumnWidth)
+    panel.addChannel:SetPoint("RIGHT", panel.select, "LEFT", -6, 0)
     panel.add:SetScript("OnClick", function()
         local conversation, err = SW:EnsureConversation(fieldValue(panel.target))
-        if conversation then SW.ui.selectedKey = conversation.key; conversation.unread = 0; SW.ui.selectMode = false; SW:RefreshUI() else SW:Print(err) end
+        if conversation then SW.ui.selectedKey = conversation.key; conversation.unread = 0; SW.ui.selectMode = false; SW.ui.listFilter = "all"; SW:RefreshUI() else SW:Print(err) end
     end)
     panel.addChannel:SetScript("OnClick", function()
         local ok, result = SW:AddChannelChat(fieldValue(panel.target))
@@ -930,7 +1033,7 @@ function SW:BuildMessagesPanel()
     panel.list = scroll(panel.left)
     panel.list:SetPoint("TOPLEFT", 12, -114)
     panel.list:SetPoint("BOTTOMRIGHT", -30, 48)
-    panel.deleteSelected = button(panel.left, "Delete selected", 122, 22)
+    panel.deleteSelected = button(panel.left, "Delete Selected", 122, 22)
     panel.deleteSelected:SetPoint("BOTTOMLEFT", 12, 12)
     panel.deleteSelected:SetScript("OnClick", function()
         -- Select mode lets you check off any conversation, not just DMs -
@@ -951,7 +1054,7 @@ function SW:BuildMessagesPanel()
     panel.cancelSelected:SetScript("OnClick", function() SW.ui.selectedDMs = {}; SW.ui.selectMode = false; SW:RefreshUI() end)
 
     panel.right = inset(panel)
-    panel.right:SetPoint("TOPLEFT", panel.left, "TOPRIGHT", 12, 0)
+    panel.right:SetPoint("TOPLEFT", panel.left, "TOPRIGHT", 6, 0)
     panel.right:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 0)
     panel.contactFavoriteIcon = panel.right:CreateTexture(nil, "ARTWORK")
     panel.contactFavoriteIcon:SetSize(16, 16)
@@ -968,12 +1071,12 @@ function SW:BuildMessagesPanel()
     panel.statusText:SetPoint("LEFT", panel.statusDot, "RIGHT", 4, 0)
     -- Positioned via flowRight() in RefreshChatPanel instead of fixed offsets,
     -- since which buttons are visible (and Delete DM's label) changes.
-    panel.copyName = fitButton(button(panel.right, "Copy name", 10, 22))
+    panel.copyName = fitButton(button(panel.right, "Copy Name", 10, 22))
     panel.copyName:SetScript("OnClick", function()
         local conversation = SW:GetConversation(SW.ui.selectedKey)
-        if conversation then SW:ShowCopyPopup("Copy name", conversation.name) end
+        if conversation then SW:ShowCopyPopup("Copy Name", conversation.name) end
     end)
-    panel.exportChat = fitButton(button(panel.right, "Export chat", 10, 22))
+    panel.exportChat = fitButton(button(panel.right, "Export Chat", 10, 22))
     panel.exportChat:SetScript("OnClick", function()
         local conversation = SW:GetConversation(SW.ui.selectedKey)
         if not conversation then return end
@@ -1000,16 +1103,80 @@ function SW:BuildMessagesPanel()
     end)
     panel.delete = button(panel.right, "Delete DM", 10, 24)
     panel.delete:SetScript("OnClick", function() if SW.ui.selectedKey then SW:DeleteConversation(SW.ui.selectedKey) end end)
+    -- Own row below the two button rows (Delete/Members/Pin/Star, then
+    -- Export/Copy) - RefreshChatPanel pushes the chat scroll area down to
+    -- make room, same reasoning as why Copy/Export got their own row
+    -- earlier this session (six buttons crammed on one row ran into the
+    -- contact name).
+    panel.chatSearch = edit(panel.right, 200, 22, "Search this chat...")
+    panel.chatSearch:SetPoint("TOPRIGHT", panel.right, "TOPRIGHT", -12, -66)
+    -- userInput only: programmatic SetText (clearing the box on Jump or
+    -- on conversation switch) also fires OnTextChanged - reacting to that
+    -- re-entered RefreshChatPanel mid-render, and the outer pass then
+    -- re-rendered with the jump target already consumed, which is why the
+    -- jump highlight never showed up.
+    panel.chatSearch:SetScript("OnTextChanged", function(self, userInput)
+        if not userInput then return end
+        panel.chatSearchText = fieldValue(self)
+        SW:RefreshChatPanel()
+    end)
+    panel.chatSearchAll = checkButton(panel.right)
+    panel.chatSearchAll:SetPoint("RIGHT", panel.chatSearch, "LEFT", -6, 0)
+    panel.chatSearchAllLabel = text(panel.right, "All Chats", "GameFontHighlightSmall")
+    panel.chatSearchAllLabel:SetPoint("RIGHT", panel.chatSearchAll, "LEFT", -2, 0)
+    panel.chatSearchAll:SetScript("OnClick", function(self)
+        panel.searchAllChats = self:GetChecked() and true or false
+        SW:RefreshMessagesPanel()
+    end)
     panel.chat = scroll(panel.right)
-    panel.message = edit(panel.right, 1, 32, "Write a message...")
+    panel.message = edit(panel.right, 1, 24, "Write a message...")
     panel.message:SetPoint("BOTTOMLEFT", 16, 12)
     panel.message:SetPoint("BOTTOMRIGHT", -96, 12)
-    panel.send = button(panel.right, "Send", 72, 32)
+    panel.send = button(panel.right, "Send", 72, 24)
     panel.send:SetPoint("BOTTOMRIGHT", -14, 12)
-    panel.chat:SetPoint("TOPLEFT", 16, -64)
-    panel.chat:SetPoint("TOPRIGHT", -32, -64)
+    panel.chat:SetPoint("TOPLEFT", 16, -92)
+    panel.chat:SetPoint("TOPRIGHT", -32, -92)
     -- Bottom anchor is redone per-refresh in RefreshChatPanel, since it
     -- depends on whether the message/send row is shown (real DMs only).
+
+    -- Floating pill, shown only while scrolled up and unseen messages have
+    -- arrived below (see RefreshChatPanel) - click jumps to the bottom.
+    -- Anchored to panel.right (not panel.message, which moves/hides
+    -- depending on conversation type) so its position stays predictable.
+    panel.newMessagesPill = fitButton(button(panel.right, "", 10, 22), 16)
+    panel.newMessagesPill:SetPoint("BOTTOM", panel.right, "BOTTOM", 0, 48)
+    -- Sibling of panel.chat (the scroll frame) at the same base frame
+    -- level - without its own strata the chat's own token widgets
+    -- (individually created, one per word/link) ended up drawn on top of
+    -- it instead of the other way around.
+    panel.newMessagesPill:SetFrameStrata("HIGH")
+    panel.newMessagesPill:Hide()
+    panel.newMessagesPill:SetScript("OnClick", function()
+        panel.newMessagesWhileScrolled = 0
+        panel.chatSyncingScroll = true
+        panel.chat:SetVerticalScroll(panel.chat:GetVerticalScrollRange())
+        panel.chatSyncingScroll = false
+        panel.newMessagesPill:Hide()
+    end)
+    -- Two independent jobs: (1) scrolling within MAX_RENDERED_MESSAGES
+    -- pixels of the top grows the render window and reloads (see
+    -- panel.renderLimit in RefreshChatPanel), and (2) scrolling back to the
+    -- bottom manually dismisses the new-messages pill without waiting for
+    -- another refresh. chatSyncingScroll skips both while a refresh's own
+    -- SetVerticalScroll call is what triggered this event, not the user.
+    panel.chat:HookScript("OnVerticalScroll", function(self, offset)
+        if panel.chatSyncingScroll then return end
+        local range = self:GetVerticalScrollRange()
+        if offset >= range - 40 then
+            panel.newMessagesWhileScrolled = 0
+            if panel.newMessagesPill then panel.newMessagesPill:Hide() end
+        end
+        if offset <= 40 and panel.chatRenderStart and panel.chatRenderStart > 1 then
+            panel.renderLimit = (panel.renderLimit or MAX_RENDERED_MESSAGES) + MAX_RENDERED_MESSAGES
+            panel.chatLoadingMore = true
+            SW:RefreshChatPanel()
+        end
+    end)
     local function send()
         local conversation = SW:GetConversation(SW.ui.selectedKey)
         if not conversation then SW:Print("Select a conversation first."); return end
@@ -1031,11 +1198,28 @@ local ROW_HEIGHT = 22
 -- share a single row instead of a 3-line card with a message preview.
 local function createConversationRow(parent)
     local row = CreateFrame("Button", nil, parent)
-    row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+    -- The gold quest-log gradient (hover AND selection) belongs to the
+    -- parchment look - on the flat themes it clashed with their own
+    -- palettes, so those get flat fills in the theme's accent color
+    -- instead (hover fainter than selection).
+    local rowTheme = currentTheme()
+    if rowTheme.useNativeWidgets then
+        row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+    else
+        local a = rowTheme.accentColor
+        row:SetHighlightTexture("Interface\\Buttons\\WHITE8X8")
+        local hover = row:GetHighlightTexture()
+        if hover then hover:SetVertexColor(a[1], a[2], a[3], 0.14) end
+    end
     row.selected = row:CreateTexture(nil, "BACKGROUND")
     row.selected:SetAllPoints()
-    row.selected:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
-    row.selected:SetBlendMode("ADD")
+    if rowTheme.useNativeWidgets then
+        row.selected:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
+        row.selected:SetBlendMode("ADD")
+    else
+        local a = rowTheme.accentColor
+        row.selected:SetColorTexture(a[1], a[2], a[3], 0.30)
+    end
     row.selected:Hide()
     row.pinIcon = row:CreateTexture(nil, "ARTWORK")
     row.pinIcon:SetSize(13, 13)
@@ -1118,6 +1302,10 @@ function SW:RefreshMessagesPanel()
     panel.counter:SetText(self.ui.selectMode and "Select chats" or counterText)
     panel.select:SetText(self.ui.selectMode and "Done" or "Select")
     fitButton(panel.select)
+    -- Re-equalize after the label change ("Select"/"Done" refit above) so
+    -- both rows' right-column buttons keep one shared width - see the
+    -- matching alignment comment in BuildMessagesPanel.
+    panel.select:SetWidth(math.max(panel.select:GetWidth(), panel.add:GetWidth()))
     panel.addChannel:SetPoint("RIGHT", panel.select, "LEFT", -6, 0)
     if self.ui.selectMode then panel.deleteSelected:Show(); panel.cancelSelected:Show() else panel.deleteSelected:Hide(); panel.cancelSelected:Hide() end
     -- The list only needs to leave room at the bottom for the delete/cancel
@@ -1223,6 +1411,33 @@ local function createChatLine(parent)
     return line
 end
 
+-- Shared row template for "flat list of messages from anywhere" views -
+-- global search results and the Bookmarks tab both show the same shape
+-- (source conversation, sender, snippet, a way to jump there, a way to
+-- toggle the bookmark) so one factory covers both instead of two
+-- near-duplicates.
+local function createMessageResultRow(parent)
+    local row = CreateFrame("Frame", nil, parent)
+    row.jump = fitButton(button(row, "Jump", 10, 20))
+    row.jump:SetPoint("RIGHT", -12, 0)
+    row.bookmark = iconButton(row, "Interface\\Icons\\INV_Misc_Note_01", "Toggle bookmark")
+    row.bookmark:SetPoint("RIGHT", row.jump, "LEFT", -6, 0)
+    -- Crop the icon's built-in dark border edge - inside a themed button
+    -- frame it doubled up and looked muddy.
+    row.bookmark.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    -- Both text lines end BEFORE the buttons instead of running underneath
+    -- them, truncated to one line each.
+    row.label = text(row, "", "GameFontHighlightSmall")
+    row.label:SetPoint("TOPLEFT", 12, -6)
+    row.label:SetPoint("RIGHT", row.bookmark, "LEFT", -10, 0)
+    if row.label.SetWordWrap then row.label:SetWordWrap(false) end
+    row.meta = text(row, "", "GameFontDisableSmall")
+    row.meta:SetPoint("TOPLEFT", row.label, "BOTTOMLEFT", 0, -3)
+    row.meta:SetPoint("RIGHT", row.bookmark, "LEFT", -10, 0)
+    if row.meta.SetWordWrap then row.meta:SetWordWrap(false) end
+    return row
+end
+
 -- Splits a fully-processed message (colors/icons/synthesized quest links
 -- already applied) into an ordered list of tokens: {kind="word", text=...}
 -- for a single space-free run of plain text, or {kind="link", link=...,
@@ -1285,9 +1500,84 @@ local function poolLinkToken(content)
     return item
 end
 
+-- One small star button per rendered real message, right-aligned. There's
+-- no single "row frame" per message (see the word/link token pools above -
+-- a message is N+1 independently-positioned widgets, not one container),
+-- so this is anchored directly to content at the Y the message started at
+-- (captured before the token loop advances it), independent of the
+-- word-wrap math rather than threaded through it.
+local function poolBookmarkIcon(content)
+    content.bookmarkPool = content.bookmarkPool or { items = {}, count = 0 }
+    local pool = content.bookmarkPool
+    pool.count = pool.count + 1
+    local icon = pool.items[pool.count]
+    if not icon then
+        icon = CreateFrame("Button", nil, content)
+        icon:SetSize(14, 14)
+        icon.texture = icon:CreateTexture(nil, "OVERLAY")
+        icon.texture:SetAllPoints()
+        icon.texture:SetTexture("Interface\\Icons\\INV_Misc_Note_01")
+        icon:RegisterForClicks("LeftButtonUp")
+        pool.items[pool.count] = icon
+    end
+    icon:Show()
+    return icon
+end
+
+-- Global search results use their own pool (createMessageResultRow), not
+-- the generic content.pool used for chat-line widgets (separators/system
+-- notes/members line via createChatLine) - the generic pool assumes one
+-- consistent widget shape for the lifetime of a content frame, and this
+-- content frame (panel.chat.content) is shared between the normal
+-- per-conversation chat view and the "all conversations" search-results
+-- view, which need very differently-shaped rows. Folded into
+-- resetTokenPools/finishTokenPools (despite the name) so every refresh -
+-- regardless of which of those two views it renders - always resets and
+-- hides leftovers from *both*, or switching between them would leave
+-- stale widgets from whichever view didn't run that pass still visible.
+-- Shared by RenderGlobalSearchResults and RefreshBookmarksPanel - fills in
+-- the label/meta/bookmark-star bits both use identically, leaving only the
+-- "what does Jump actually do" behavior (which differs slightly between
+-- the two) to the caller.
+local function populateMessageResultRow(row, conversation, message, onJump)
+    local speaker = message.outgoing and "You" or (message.sender or splitRealm(conversation.name))
+    row.label:SetText(speaker .. ": " .. plainText(message.text))
+    row.meta:SetText(splitRealm(conversation.name) .. " - " .. date("%d.%m.%Y %H:%M", message.timestamp or 0))
+    row.jump:SetScript("OnClick", onJump)
+    -- Desaturation instead of a color tint - tinting a painted icon
+    -- gold/grey just made it muddy; grey-and-dim vs. full-color reads
+    -- clearly as off/on.
+    if message.bookmarked then
+        row.bookmark.icon:SetDesaturated(false)
+        row.bookmark.icon:SetVertexColor(1, 1, 1, 1)
+    else
+        row.bookmark.icon:SetDesaturated(true)
+        row.bookmark.icon:SetVertexColor(1, 1, 1, 0.5)
+    end
+    row.bookmark:SetScript("OnClick", function()
+        SW:ToggleMessageBookmark(conversation, message)
+        SW:RefreshUI()
+    end)
+end
+
+local function poolResultRow(content)
+    content.resultPool = content.resultPool or { items = {}, count = 0 }
+    local pool = content.resultPool
+    pool.count = pool.count + 1
+    local row = pool.items[pool.count]
+    if not row then
+        row = createMessageResultRow(content)
+        pool.items[pool.count] = row
+    end
+    row:Show()
+    return row
+end
+
 local function resetTokenPools(content)
     if content.wordPool then content.wordPool.count = 0 end
     if content.linkPool then content.linkPool.count = 0 end
+    if content.bookmarkPool then content.bookmarkPool.count = 0 end
+    if content.resultPool then content.resultPool.count = 0 end
 end
 
 local function finishTokenPools(content)
@@ -1297,11 +1587,158 @@ local function finishTokenPools(content)
     if content.linkPool then
         for i = content.linkPool.count + 1, #content.linkPool.items do content.linkPool.items[i]:Hide() end
     end
+    if content.bookmarkPool then
+        for i = content.bookmarkPool.count + 1, #content.bookmarkPool.items do content.bookmarkPool.items[i]:Hide() end
+    end
+    if content.resultPool then
+        for i = content.resultPool.count + 1, #content.resultPool.items do content.resultPool.items[i]:Hide() end
+    end
+end
+
+-- The "All Chats" search mode swaps the normal per-conversation chat view
+-- for a flat, scrollable list of matches from every conversation (not
+-- rendered through the token/word-wrap pipeline - each match is a single
+-- summary row, same shape as the Bookmarks tab, via createMessageResultRow/
+-- poolResultRow). Hides all the conversation-specific chrome (name, status,
+-- star/pin/members/delete, message box) since none of it applies here.
+function SW:RenderGlobalSearchResults(panel, content)
+    panel.chatSearch:Show(); panel.chatSearchAll:Show(); panel.chatSearchAllLabel:Show()
+    panel.contact:SetText("Search results")
+    panel.contact:ClearAllPoints()
+    panel.contact:SetPoint("TOPLEFT", 16, -12)
+    panel.contactFavoriteIcon:Hide()
+    panel.contactRealm:Hide()
+    panel.statusDot:Hide(); panel.statusText:Hide()
+    panel.star:Hide(); panel.pin:Hide(); panel.members:Hide(); panel.delete:Hide()
+    panel.copyName:Hide(); panel.exportChat:Hide()
+    panel.message:Hide(); panel.send:Hide()
+    panel.chat:ClearAllPoints()
+    panel.chat:SetPoint("TOPLEFT", 16, -92)
+    panel.chat:SetPoint("TOPRIGHT", -32, -92)
+    panel.chat:SetPoint("BOTTOMLEFT", panel.right, "BOTTOMLEFT", 16, 12)
+    panel.chat:SetPoint("BOTTOMRIGHT", panel.right, "BOTTOMRIGHT", -32, 12)
+    local results = self:SearchAllMessages(panel.chatSearchText)
+    local width = math.max(340, panel.chat:GetWidth() - 5)
+    local y = 0
+    if #results == 0 then
+        local empty = poolRow(content, createChatLine)
+        empty.link = nil
+        empty.text:SetText("No messages match \"" .. panel.chatSearchText .. "\".")
+        empty.text:SetTextColor(0.62, 0.62, 0.62)
+        empty:ClearAllPoints()
+        empty:SetPoint("TOPLEFT", 10, -12)
+        empty.text:SetWidth(width - 20)
+        empty:SetSize(width - 20, 20)
+        y = -40
+    else
+        for i = 1, math.min(#results, MAX_RENDERED_MESSAGES) do
+            local entry = results[i]
+            local conversation, message = entry.conversation, entry.message
+            local row = poolResultRow(content)
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", 0, y)
+            row:SetSize(width, 44)
+            populateMessageResultRow(row, conversation, message, function()
+                panel.searchAllChats = false
+                panel.chatSearchAll:SetChecked(false)
+                -- Explicitly cleared here rather than relying on the
+                -- "conversation changed" auto-clear in RefreshChatPanel -
+                -- that check compares against whatever conversation was
+                -- selected before global search was ever turned on, which
+                -- could happen to already equal the jump target, silently
+                -- skipping the clear and leaving stale search text (and
+                -- focus/cursor) behind in the box.
+                panel.chatSearchText = nil
+                panel.chatSearch:ClearFocus()
+                panel.chatSearch:SetText(panel.chatSearch.hint or "")
+                panel.scrollToMessage = message
+                SW.ui.selectedKey = conversation.key
+                -- A jump target outside the active list filter (e.g. "DM"
+                -- while jumping to a Guild Chat result) got silently
+                -- overridden right back by RefreshMessagesPanel's "keep
+                -- selection valid" check, since the target conversation
+                -- wasn't even in the filtered list to begin with.
+                SW.ui.listFilter = "all"
+                SW:RefreshUI()
+            end)
+            y = y - 48
+        end
+    end
+    content:SetSize(width, math.max(panel.chat:GetHeight(), -y + 8))
+    panel.chat:UpdateScrollChildRect()
+    panel.chat:SetVerticalScroll(0)
 end
 
 function SW:RefreshChatPanel()
     local panel = self.ui.panels.Messages
+    if panel.searchAllChats and panel.chatSearchText and panel.chatSearchText ~= "" then
+        local content = panel.chat.content
+        poolStart(content)
+        resetTokenPools(content)
+        self:RenderGlobalSearchResults(panel, content)
+        poolFinish(content)
+        finishTokenPools(content)
+        -- This view doesn't have a growable render window (see
+        -- panel.renderLimit below) - without resetting this, the
+        -- OnVerticalScroll hook could still see a >1 value left over from
+        -- the last normal conversation and trigger a pointless extra
+        -- refresh when scrolling to the top of this list.
+        panel.chatRenderStart = 1
+        return
+    end
     local conversation = self:GetConversation(self.ui.selectedKey)
+    -- A search filter left over from a different conversation would
+    -- silently hide messages in whatever's newly selected without any
+    -- indication why - clear it the moment the selected conversation
+    -- actually changes (not on every refresh, or typing would never work).
+    local keyChanged = panel.lastSearchedKey ~= self.ui.selectedKey
+    if keyChanged then
+        panel.lastSearchedKey = self.ui.selectedKey
+        panel.chatSearchText = nil
+        if panel.chatSearch then panel.chatSearch:SetText(panel.chatSearch.hint or "") end
+    end
+    -- The rendered window grows by MAX_RENDERED_MESSAGES each time the user
+    -- scrolls near the top (see the OnVerticalScroll hook in
+    -- BuildMessagesPanel) instead of only ever showing the last 200 - but
+    -- only within the same conversation and search filter; switching
+    -- either one means a completely different message set, so the window
+    -- resets back down to the normal starting size rather than staying
+    -- artificially large.
+    if keyChanged or panel.lastRenderedSearchText ~= panel.chatSearchText then
+        panel.renderLimit = MAX_RENDERED_MESSAGES
+    end
+    panel.lastRenderedSearchText = panel.chatSearchText
+    panel.renderLimit = panel.renderLimit or MAX_RENDERED_MESSAGES
+    -- A refresh doesn't always mean "new message arrived" - toggling a
+    -- bookmark, or a pin/favorite elsewhere, also calls NotifyDataChanged
+    -- and re-runs this. Snapping back to the bottom every time that
+    -- happens while the user is scrolled up reading old messages (e.g. to
+    -- bookmark one) was disorienting - only genuinely new messages (the
+    -- stored count actually grew) while already at the bottom, or
+    -- switching conversations, should jump to the bottom; anything else
+    -- preserves wherever they'd scrolled to.
+    local previousScroll = panel.chat:GetVerticalScroll()
+    local previousScrollRange = panel.chat:GetVerticalScrollRange()
+    local wasNearBottom = previousScrollRange <= 0 or previousScroll >= previousScrollRange - 40
+    local sameConversationAsLastRender = panel.lastRenderKey == self.ui.selectedKey
+    local sameMessageCountAsLastRender = sameConversationAsLastRender
+        and panel.lastRenderCount == #(conversation and conversation.messages or {})
+    -- When a scroll-near-the-top gesture just grew the render window (see
+    -- the OnVerticalScroll hook), find whichever message was sitting at
+    -- the top of the viewport before older messages get inserted above it,
+    -- using last render's message->Y map - so the view can be re-anchored
+    -- on that same message afterward instead of visibly jumping around.
+    local anchorMessage
+    if panel.chatLoadingMore and panel.messageYPositions then
+        local bestDelta
+        for message, msgY in pairs(panel.messageYPositions) do
+            local delta = -msgY - previousScroll
+            if delta >= -2 and (not bestDelta or delta < bestDelta) then
+                bestDelta = delta
+                anchorMessage = message
+            end
+        end
+    end
     local content = panel.chat.content
     poolStart(content)
     resetTokenPools(content)
@@ -1315,15 +1752,17 @@ function SW:RefreshChatPanel()
         panel.star:Hide(); panel.pin:Hide(); panel.members:Hide(); panel.delete:Hide()
         panel.copyName:Hide(); panel.exportChat:Hide()
         panel.message:Hide(); panel.send:Hide()
+        panel.chatSearch:Hide(); panel.chatSearchAll:Hide(); panel.chatSearchAllLabel:Hide()
         panel.chat:ClearAllPoints()
-        panel.chat:SetPoint("TOPLEFT", 16, -64)
-        panel.chat:SetPoint("TOPRIGHT", -32, -64)
+        panel.chat:SetPoint("TOPLEFT", 16, -92)
+        panel.chat:SetPoint("TOPRIGHT", -32, -92)
         panel.chat:SetPoint("BOTTOMLEFT", panel.right, "BOTTOMLEFT", 16, 12)
         panel.chat:SetPoint("BOTTOMRIGHT", panel.right, "BOTTOMRIGHT", -32, 12)
         poolFinish(content)
         finishTokenPools(content)
         return
     end
+    panel.chatSearch:Show(); panel.chatSearchAll:Show(); panel.chatSearchAllLabel:Show()
     local base, realm = splitRealm(conversation.name)
     if conversation.system and conversation.channel == "guild" and GetGuildInfo then
         realm = GetGuildInfo("player")
@@ -1340,7 +1779,7 @@ function SW:RefreshChatPanel()
     end
     panel.contactRealm:SetText(realm and ("(" .. realm .. ")") or "")
     panel.contactRealm:SetShown(realm ~= nil)
-    -- "Copy name" doesn't make sense for the shared Guild/Party/Raid/channel
+    -- "Copy Name" doesn't make sense for the shared Guild/Party/Raid/channel
     -- conversations, only for a real player DM.
     panel.copyName:SetShown(not conversation.system)
     panel.exportChat:Show()
@@ -1360,7 +1799,7 @@ function SW:RefreshChatPanel()
             panel.delete:SetText("Remove")
             panel.delete:Show()
         elseif conversation.channel == "party" or conversation.channel == "raid" then
-            panel.delete:SetText("Delete session")
+            panel.delete:SetText("Delete Session")
             panel.delete:Show()
         else
             panel.delete:Hide()
@@ -1370,17 +1809,17 @@ function SW:RefreshChatPanel()
         -- row doesn't apply, so hide it instead of just disabling it.
         panel.message:Hide(); panel.send:Hide()
         panel.chat:ClearAllPoints()
-        panel.chat:SetPoint("TOPLEFT", 16, -64)
-        panel.chat:SetPoint("TOPRIGHT", -32, -64)
+        panel.chat:SetPoint("TOPLEFT", 16, -92)
+        panel.chat:SetPoint("TOPRIGHT", -32, -92)
         panel.chat:SetPoint("BOTTOMLEFT", panel.right, "BOTTOMLEFT", 16, 12)
         panel.chat:SetPoint("BOTTOMRIGHT", panel.right, "BOTTOMRIGHT", -32, 12)
     else
         panel.star:Show(); panel.members:Hide(); panel.pin:Show(); panel.delete:Show(); panel.delete:SetText("Delete DM"); panel.message:Show(); panel.send:Show(); panel.message:Enable(); panel.send:Enable()
         panel.chat:ClearAllPoints()
-        panel.chat:SetPoint("TOPLEFT", 16, -64)
-        panel.chat:SetPoint("TOPRIGHT", -32, -64)
-        panel.chat:SetPoint("BOTTOMLEFT", panel.right, "BOTTOMLEFT", 16, 54)
-        panel.chat:SetPoint("BOTTOMRIGHT", panel.right, "BOTTOMRIGHT", -32, 54)
+        panel.chat:SetPoint("TOPLEFT", 16, -92)
+        panel.chat:SetPoint("TOPRIGHT", -32, -92)
+        panel.chat:SetPoint("BOTTOMLEFT", panel.right, "BOTTOMLEFT", 16, 44)
+        panel.chat:SetPoint("BOTTOMRIGHT", panel.right, "BOTTOMRIGHT", -32, 44)
         local state = self:GetContactStatus(conversation.name)
         local indicator = state == "online" and "Green" or (state == "busy" and "Yellow" or "Gray")
         local stateLabel = state == "online" and "Online" or (state == "busy" and "Busy" or "Offline")
@@ -1397,11 +1836,23 @@ function SW:RefreshChatPanel()
     end
     if conversation.pinned then panel.pin:LockHighlight() else panel.pin:UnlockHighlight() end
     fitButton(panel.delete)
+    fitButton(panel.exportChat)
+    fitButton(panel.copyName)
+    -- The three stacked rows (Delete row, Copy/Export row, search row) are
+    -- all right-aligned but had ragged left edges - give the rightmost
+    -- column one shared width (Delete/Export) and stretch the search box
+    -- so its left edge lines up with Copy Name's.
+    local rightColumn = math.max(panel.delete:IsShown() and panel.delete:GetWidth() or 0, panel.exportChat:GetWidth())
+    if panel.delete:IsShown() then panel.delete:SetWidth(rightColumn) end
+    panel.exportChat:SetWidth(rightColumn)
     -- Copy/Export live on their own row below Pin/Star/Delete DM instead of
     -- sharing the top row - with 6 buttons crammed against the right edge
     -- the row got long enough to run into the contact name on the left.
     flowRight(panel.right, -12, -10, 6, { panel.delete, panel.members, panel.pin, panel.star })
     flowRight(panel.right, -12, -38, 6, { panel.exportChat, panel.copyName })
+    local searchWidth = rightColumn
+    if panel.copyName:IsShown() then searchWidth = rightColumn + 6 + panel.copyName:GetWidth() end
+    panel.chatSearch:SetWidth(math.max(170, searchWidth))
     local width = math.max(340, panel.chat:GetWidth() - 5)
     local y = 0
     if conversation.members and #conversation.members > 0 then
@@ -1426,10 +1877,67 @@ function SW:RefreshChatPanel()
     -- (up to maxGroupMessages, e.g. 1500 in a busy Guild Chat) on every
     -- single refresh is what caused the noticeable stutter opening the
     -- window. The full history is still there for Export chat; only the
-    -- rendered window is capped.
-    local renderStart = math.max(1, #allMessages - MAX_RENDERED_MESSAGES + 1)
-    for index = renderStart, #allMessages do
-        local message = allMessages[index]
+    -- rendered window is capped - normally to the last 200 raw messages,
+    -- but while a chat search is active, to the last 200 *matches* instead
+    -- (found by scanning the full history, not just that tail), otherwise
+    -- searching for something older than the 200 most recent messages
+    -- would silently find nothing.
+    local searchText = panel.chatSearchText and panel.chatSearchText ~= "" and string.lower(panel.chatSearchText) or nil
+    local renderMessages
+    if searchText then
+        local matches = {}
+        for _, message in ipairs(allMessages) do
+            if not message.system and message.text and string.find(string.lower(message.text), searchText, 1, true) then
+                matches[#matches + 1] = message
+            end
+        end
+        renderMessages = matches
+    else
+        renderMessages = allMessages
+    end
+    local renderStart = math.max(1, #renderMessages - panel.renderLimit + 1)
+    -- A bookmark can easily be older than the last 200 messages (that's
+    -- the whole point of bookmarking it) - if the Jump target isn't in the
+    -- normal tail window, re-anchor the window around it instead, so it's
+    -- actually rendered (and therefore something the scroll-to below can
+    -- find at all) rather than always showing just the most recent tail.
+    if panel.scrollToMessage then
+        for i, m in ipairs(renderMessages) do
+            if m == panel.scrollToMessage then
+                if i < renderStart then
+                    renderStart = math.max(1, i - math.floor(MAX_RENDERED_MESSAGES / 2))
+                end
+                break
+            end
+        end
+    end
+    -- Published so the OnVerticalScroll hook (BuildMessagesPanel) knows
+    -- whether scrolling to the top should grow the window further.
+    panel.chatRenderStart = renderStart
+    -- Set by a Jump button (Bookmarks tab / global search results) - when
+    -- present, scrolls to that specific message instead of the bottom.
+    -- Found by reference (message tables have no stable id), captured at
+    -- the same Y the bookmark icon uses so it lines up with the message's
+    -- first line.
+    local scrollToY
+    -- Every real message's top Y this render, keyed by the message table
+    -- itself - published as panel.messageYPositions at the end so the next
+    -- render (if it's a load-more) can find the same message again after
+    -- older ones get inserted above it and shift everything's Y.
+    local messageYPositions = {}
+    -- Subtle gold wash behind the jumped-to message so the eye lands on
+    -- the right line after the scroll - naturally disappears on the next
+    -- refresh (scrollToMessage is one-shot, see the bottom of this
+    -- function), no timer needed.
+    if not content.jumpHighlight then
+        content.jumpHighlight = content:CreateTexture(nil, "BACKGROUND")
+        -- Theme accent, not a fixed gold - gold clashed on the flat themes.
+        local a = currentTheme().accentColor or { 1, 0.82, 0 }
+        content.jumpHighlight:SetColorTexture(a[1], a[2], a[3], 0.16)
+    end
+    content.jumpHighlight:Hide()
+    for index = renderStart, #renderMessages do
+        local message = renderMessages[index]
         local dayKey = date("%Y-%m-%d", message.timestamp or 0)
         if dayKey ~= lastDayKey then
             local label
@@ -1466,6 +1974,24 @@ function SW:RefreshChatPanel()
             note:SetSize(width - 16, 16)
             y = y - 20
         else
+            -- Captured before the token loop below mutates y - the icon
+            -- lines up with the message's first line regardless of how
+            -- many lines it wraps to.
+            local messageStartY = y
+            messageYPositions[message] = messageStartY
+            if panel.scrollToMessage == message then scrollToY = messageStartY end
+            local bookmarkIcon = poolBookmarkIcon(content)
+            bookmarkIcon:ClearAllPoints()
+            bookmarkIcon:SetPoint("TOPLEFT", content, "TOPLEFT", 4, messageStartY)
+            if message.bookmarked then
+                bookmarkIcon.texture:SetVertexColor(1, 0.82, 0, 1)
+            else
+                bookmarkIcon.texture:SetVertexColor(0.5, 0.5, 0.5, 0.6)
+            end
+            bookmarkIcon:SetScript("OnClick", function()
+                SW:ToggleMessageBookmark(conversation, message)
+                SW:RefreshUI()
+            end)
             local r, g, b = chatColor(message.outgoing)
             local speaker, nameColor
             if message.outgoing then
@@ -1484,7 +2010,8 @@ function SW:RefreshChatPanel()
             -- name uncolored.
             if not nameColor then nameColor = string.format("%02x%02x%02x", r * 255, g * 255, b * 255) end
             local speakerText = "|cff" .. nameColor .. speaker .. "|r"
-            local timePrefix = "|cff808080[" .. date("%H:%M:%S", message.timestamp or 0) .. "]|r "
+            local timeColor = message.bookmarked and "ffe066" or "808080"
+            local timePrefix = "|cff" .. timeColor .. "[" .. date("%H:%M:%S", message.timestamp or 0) .. "]|r "
             -- SetItemRef/GameTooltip:SetHyperlink both want just the inner
             -- payload (e.g. "quest:2937:60"), not the |H...|h markup around
             -- it. Passing the raw wrapped form is why quest links didn't
@@ -1501,7 +2028,12 @@ function SW:RefreshChatPanel()
             local tokens = tokenizeMessage(fullText)
             local lineHeight = fontHeight + 4
             local spaceWidth = math.max(4, math.floor(fontHeight * 0.3))
-            local availableWidth = width - 16
+            -- Reserves room for the bookmark star sitting to the left of
+            -- the timestamp (see messageStartY/bookmarkIcon above) - text
+            -- (including wrapped continuation lines) starts past it
+            -- instead of running underneath.
+            local textIndent = 18
+            local availableWidth = width - 16 - textIndent
             local x, first = 0, true
             for _, token in ipairs(tokens) do
                 local widget, tokenWidth
@@ -1525,12 +2057,18 @@ function SW:RefreshChatPanel()
                 end
                 if not first then x = x + spaceWidth end
                 widget:ClearAllPoints()
-                widget:SetPoint("TOPLEFT", content, "TOPLEFT", 8 + x, y)
+                widget:SetPoint("TOPLEFT", content, "TOPLEFT", 8 + textIndent + x, y)
                 if token.kind == "link" then widget:SetSize(tokenWidth, lineHeight - 4) end
                 x = x + tokenWidth
                 first = false
             end
             y = y - lineHeight - 4
+            if panel.scrollToMessage == message then
+                content.jumpHighlight:ClearAllPoints()
+                content.jumpHighlight:SetPoint("TOPLEFT", content, "TOPLEFT", 2, messageStartY + 2)
+                content.jumpHighlight:SetSize(width - 4, (messageStartY - y) - 2)
+                content.jumpHighlight:Show()
+            end
         end
     end
     if #conversation.messages == 0 then
@@ -1552,7 +2090,75 @@ function SW:RefreshChatPanel()
     -- numbers from before the SetSize above took effect, which is why this
     -- sometimes failed to reach the bottom after sending/receiving a message.
     panel.chat:UpdateScrollChildRect()
-    panel.chat:SetVerticalScroll(panel.chat:GetVerticalScrollRange())
+    panel.messageYPositions = messageYPositions
+    -- Guards every SetVerticalScroll below against re-triggering the
+    -- OnVerticalScroll hook in BuildMessagesPanel on its own resulting
+    -- scroll change - without this, a programmatic scroll near the top or
+    -- bottom could re-fire the load-more/pill-dismiss logic right back.
+    local function setScroll(offset)
+        panel.chatSyncingScroll = true
+        panel.chat:SetVerticalScroll(offset)
+        panel.chatSyncingScroll = false
+    end
+    -- Shared by every branch that doesn't explicitly clear the counter -
+    -- a load-more (scrolling up for older history) shouldn't silently
+    -- dismiss a pill that was already up for genuinely unseen new messages
+    -- further down.
+    local function refreshPill()
+        if not panel.newMessagesPill then return end
+        if (panel.newMessagesWhileScrolled or 0) <= 0 then
+            panel.newMessagesPill:Hide()
+            return
+        end
+        -- No arrow glyph in the label - the button font (GameFont*) doesn't
+        -- have U+2193 and rendered it as a missing-glyph box.
+        panel.newMessagesPill:SetText(panel.newMessagesWhileScrolled == 1
+            and "1 new message - click to jump" or (panel.newMessagesWhileScrolled .. " new messages - click to jump"))
+        fitButton(panel.newMessagesPill, 16)
+        panel.newMessagesPill:Show()
+    end
+    if scrollToY then
+        -- Roughly centers the target message in the visible area instead
+        -- of pinning it to the very top edge, clamped to the actual
+        -- scrollable range.
+        local offset = math.max(0, math.min(panel.chat:GetVerticalScrollRange(), -scrollToY - panel.chat:GetHeight() / 2))
+        setScroll(offset)
+        panel.newMessagesWhileScrolled = 0
+        refreshPill()
+    elseif anchorMessage and messageYPositions[anchorMessage] then
+        -- Older messages were just inserted above what was visible - keep
+        -- that same message in view instead of the log jumping around.
+        local offset = math.max(0, math.min(panel.chat:GetVerticalScrollRange(), -messageYPositions[anchorMessage]))
+        setScroll(offset)
+        refreshPill()
+    elseif not sameConversationAsLastRender then
+        setScroll(panel.chat:GetVerticalScrollRange())
+        panel.newMessagesWhileScrolled = 0
+        refreshPill()
+    elseif sameMessageCountAsLastRender then
+        setScroll(math.min(previousScroll, panel.chat:GetVerticalScrollRange()))
+        refreshPill()
+    elseif wasNearBottom then
+        -- New message(s) arrived while already following the bottom of the
+        -- log - keep following.
+        setScroll(panel.chat:GetVerticalScrollRange())
+        panel.newMessagesWhileScrolled = 0
+        refreshPill()
+    else
+        -- New message(s) arrived while scrolled up reading history - stay
+        -- put instead of yanking the view down, and surface the pill.
+        setScroll(math.min(previousScroll, panel.chat:GetVerticalScrollRange()))
+        local newCount = #conversation.messages - (panel.lastRenderCount or #conversation.messages)
+        panel.newMessagesWhileScrolled = (panel.newMessagesWhileScrolled or 0) + math.max(0, newCount)
+        refreshPill()
+    end
+    -- One-shot - only the refresh right after a Jump click or a load-more
+    -- scroll should act here, not every subsequent refresh (a new incoming
+    -- message, etc.) while that conversation happens to stay open.
+    panel.scrollToMessage = nil
+    panel.chatLoadingMore = nil
+    panel.lastRenderKey = self.ui.selectedKey
+    panel.lastRenderCount = #(conversation.messages or {})
 end
 
 -- WoW addons can't touch the OS clipboard directly. The standard workaround
@@ -1561,6 +2167,10 @@ end
 function SW:ShowCopyPopup(title, content)
     if not self.ui.copyFrame then
         local frame = CreateFrame("Frame", "SaveWhispersCopyFrame", UIParent, BACKDROP)
+        -- Same reasoning as the main window - without this, Escape either
+        -- does nothing (if the main window is hidden behind this popup) or
+        -- closes the main window instead of this one on top of it.
+        tinsert(UISpecialFrames, "SaveWhispersCopyFrame")
         frame:SetSize(520, 420)
         frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
         -- Above DIALOG (same strata as the main window) so it reliably
@@ -1598,19 +2208,44 @@ function SW:ShowCopyPopup(title, content)
     frame.editBox:SetText(content)
     frame.editBox:HighlightText()
     frame.editBox:SetFocus()
-    -- A single name doesn't need the full export-sized window.
-    if string.find(content, "\n") then
-        frame:SetSize(560, 440)
-    else
-        frame:SetSize(420, 130)
+    -- A single name doesn't need the full export-sized window, and a short
+    -- multi-line list (Copy names on a 6-person party) doesn't need the
+    -- same size (width AND height) as a 1000-line Export chat either -
+    -- scale with the actual content instead of one fixed "multi-line"
+    -- size, capped at the old fixed size for anything long.
+    local lineCount, longestLine = 1, 0
+    for line in string.gmatch(content .. "\n", "(.-)\n") do
+        lineCount = lineCount + 1
+        longestLine = math.max(longestLine, #line)
     end
+    if lineCount <= 1 then
+        frame:SetSize(420, 130)
+    else
+        local width = math.min(560, math.max(300, 80 + longestLine * 7))
+        local height = math.min(440, math.max(160, 100 + math.min(lineCount, 20) * 16))
+        frame:SetSize(width, height)
+    end
+    -- Same FULLSCREEN_DIALOG strata as the Members popup this can be
+    -- opened from ("Copy Names") - Raise() alone didn't reliably win
+    -- against it, so this pins an explicit, always-higher frame level
+    -- instead of relying on raise-ordering.
+    local membersFrame = self.ui.membersFrame
+    frame:SetFrameLevel((membersFrame and membersFrame:IsShown() and membersFrame:GetFrameLevel() or 0) + 10)
     frame:Show()
 end
 
+-- Width is fixed (narrower than the old 360 - rows are just names now that
+-- online/offline status was dropped, they never needed that much room).
+-- Height is NOT fixed here - ShowMembers resizes the frame every time it's
+-- opened, to fit however many members there actually are (capped, beyond
+-- which the scroll frame already inside takes over).
+local MEMBERS_FRAME_WIDTH = 300
 function SW:CreateMembersFrame()
     if self.ui.membersFrame then return self.ui.membersFrame end
     local frame = CreateFrame("Frame", "SaveWhispersMembersFrame", UIParent, BACKDROP)
-    frame:SetSize(360, 440)
+    -- Same reasoning as the main window - see SaveWhispersCopyFrame above.
+    tinsert(UISpecialFrames, "SaveWhispersMembersFrame")
+    frame:SetSize(MEMBERS_FRAME_WIDTH, 300)
     frame:SetPoint("CENTER", UIParent, "CENTER", 260, 10)
     -- Above DIALOG (same strata as the main window) so it reliably shows in
     -- front instead of possibly landing behind it, same issue as the copy
@@ -1627,8 +2262,17 @@ function SW:CreateMembersFrame()
     frame.close = closeButton(frame)
     frame.close:SetPoint("TOPRIGHT", -4, -5)
     frame.close:SetScript("OnClick", function() frame:Hide() end)
+    -- WoW addons can't write to the OS clipboard directly - same pattern as
+    -- "Copy Name"/"Export Chat" elsewhere, a popup with pre-selected text.
+    frame.copyNames = fitButton(button(frame, "Copy Names", 10, 22))
+    frame.copyNames:SetPoint("TOPRIGHT", -8, -44)
+    frame.copyNames:SetScript("OnClick", function()
+        local lines = {}
+        for _, name in ipairs(frame.memberNames or {}) do lines[#lines + 1] = name end
+        SW:ShowCopyPopup(frame.title:GetText() or "Members", table.concat(lines, "\n"))
+    end)
     frame.scroll = scroll(frame)
-    frame.scroll:SetPoint("TOPLEFT", 16, -50)
+    frame.scroll:SetPoint("TOPLEFT", 16, -76)
     frame.scroll:SetPoint("BOTTOMRIGHT", -30, 16)
     frame:Hide()
     self.ui.membersFrame = frame
@@ -1636,7 +2280,15 @@ function SW:CreateMembersFrame()
 end
 
 local function createMemberRow(parent)
-    local row = CreateFrame("Frame", nil, parent)
+    -- A Button, not a plain Frame - clicking a name opens a small Copy
+    -- popup with just that one name, a quicker path than "Copy Names"
+    -- (which dumps every member at once) when you only want one.
+    local row = CreateFrame("Button", nil, parent)
+    row:EnableMouse(true)
+    row:RegisterForClicks("LeftButtonUp")
+    local highlight = row:CreateTexture(nil, "HIGHLIGHT")
+    highlight:SetAllPoints()
+    highlight:SetColorTexture(1, 1, 1, 0.08)
     row.label = text(row, "", "GameFontHighlightSmall")
     row.label:SetPoint("LEFT", 8, 0)
     return row
@@ -1656,6 +2308,10 @@ local function addMember(members, names, name, state)
     if not entry then
         entry = {
             name = realm and (base .. " (" .. realm .. ")") or base,
+            -- Raw "Name-Realm" form (no parens/space) for Copy names - the
+            -- display format reads better on screen, but it's not what a
+            -- whisper/invite command actually accepts if you paste it.
+            rawName = realm and (base .. "-" .. realm) or base,
             sortName = base,
             hasRealm = realm ~= nil,
             state = state or "Offline",
@@ -1666,6 +2322,7 @@ local function addMember(members, names, name, state)
         -- Upgrade a bare name seen first to the realm-qualified display
         -- once a mention with the realm turns up, instead of duplicating.
         entry.name = base .. " (" .. realm .. ")"
+        entry.rawName = base .. "-" .. realm
         entry.hasRealm = true
     end
 end
@@ -1702,6 +2359,16 @@ function SW:ShowMembers(conversation)
     -- window. Drop the " - <date>" part, the title bar doesn't need it.
     local shortName = string.match(conversation.name, "^(.-) %- .+$") or conversation.name
     frame.title:SetText(shortName .. " Members (" .. #names .. ")")
+    frame.memberNames = {}
+    for _, member in ipairs(names) do frame.memberNames[#frame.memberNames + 1] = member.rawName or member.name end
+    -- Grows/shrinks with the member count instead of a fixed size - a
+    -- 3-person party session no longer wastes most of the window on empty
+    -- space, and a 40-person raid still gets capped at a sane height with
+    -- the scroll frame (already there regardless) taking over past that.
+    local ROW_H = 32
+    local MAX_VISIBLE_ROWS = 20
+    local visibleRows = math.max(1, math.min(#names, MAX_VISIBLE_ROWS))
+    setPixelSize(frame, MEMBERS_FRAME_WIDTH, 76 + visibleRows * ROW_H + 20)
     local content = frame.scroll.content
     content.emptyLabel = content.emptyLabel or text(content, "", "GameFontDisableSmall")
     poolStart(content)
@@ -1731,6 +2398,9 @@ function SW:ShowMembers(conversation)
             row.label:SetText(member.name)
             row.label:SetTextColor(0.9, 0.9, 0.9)
         end
+        row:SetScript("OnClick", function()
+            SW:ShowCopyPopup("Copy Name", member.rawName or member.name)
+        end)
         y = y - 32
     end
     poolFinish(content)
@@ -1740,25 +2410,31 @@ end
 
 function SW:BuildWatchlistPanel()
     local panel = self:NewPanel("Watchlist")
-    local icon = panel:CreateTexture(nil, "ARTWORK")
+    -- Same inset content box the Messages tab's two columns sit in - the
+    -- other tabs floating their content directly on the window background
+    -- made the UI read as inconsistent next to it. Everything is parented
+    -- to the box (not the panel) so the box's backdrop renders underneath.
+    panel.box = inset(panel)
+    panel.box:SetAllPoints()
+    local icon = panel.box:CreateTexture(nil, "ARTWORK")
     icon:SetSize(24, 24)
-    icon:SetPoint("TOPLEFT", 2, -10)
+    icon:SetPoint("TOPLEFT", 10, -10)
     icon:SetTexture("Interface\\Icons\\INV_Misc_Eye_01")
-    local heading = text(panel, "Watchlist", "GameFontNormalLarge")
+    local heading = text(panel.box, "Watchlist", "GameFontNormalLarge")
     heading:SetPoint("LEFT", icon, "RIGHT", 6, 1)
-    local hint = text(panel, "Mark important players. Starred conversations are never removed automatically.", "GameFontDisableSmall")
-    hint:SetPoint("TOPLEFT", 4, -39)
-    panel.addName = edit(panel, 250, 22, "Enter player name", function(value) return SW:GetNameSuggestions(value) end)
-    panel.addName:SetPoint("TOPLEFT", 4, -68)
-    panel.addButton = button(panel, "Add player", 96, 24)
+    local hint = text(panel.box, "Mark important players. Starred conversations are never removed automatically.", "GameFontDisableSmall")
+    hint:SetPoint("TOPLEFT", 12, -39)
+    panel.addName = edit(panel.box, 250, 22, "Enter player name", function(value) return SW:GetNameSuggestions(value) end)
+    panel.addName:SetPoint("TOPLEFT", 12, -68)
+    panel.addButton = button(panel.box, "Add Player", 96, 24)
     panel.addButton:SetPoint("LEFT", panel.addName, "RIGHT", 8, 0)
     panel.addButton:SetScript("OnClick", function()
         local ok, err = SW:AddToWatchlist(fieldValue(panel.addName))
         if ok then panel.addName:SetText(panel.addName.hint) else SW:Print(err) end
     end)
-    panel.list = scroll(panel)
-    panel.list:SetPoint("TOPLEFT", 4, -112)
-    panel.list:SetPoint("BOTTOMRIGHT", -18, 4)
+    panel.list = scroll(panel.box)
+    panel.list:SetPoint("TOPLEFT", 12, -112)
+    panel.list:SetPoint("BOTTOMRIGHT", -28, 10)
 end
 
 -- Matches the icon-button style used in the chat header instead of the
@@ -1777,7 +2453,7 @@ local function createWatchlistRow(parent)
     row.delete:SetPoint("RIGHT", -12, 0)
     row.remove = iconButton(row, "Interface\\TargetingFrame\\UI-RaidTargetingIcon_1", "Remove from watchlist")
     row.remove:SetPoint("RIGHT", row.delete, "LEFT", -4, 0)
-    row.open = fitButton(button(row, "Open chat", 10, 22))
+    row.open = fitButton(button(row, "Open Chat", 10, 22))
     row.open:SetPoint("RIGHT", row.remove, "LEFT", -8, 0)
     return row
 end
@@ -1806,12 +2482,88 @@ function SW:RefreshWatchlistPanel()
         local base, realm = splitRealm(conversation.name)
         row.label:SetText(base)
         row.realm:SetText(realm and ("(" .. realm .. ")") or "")
-        row.open:SetScript("OnClick", function() SW.ui.selectedKey = conversation.key; conversation.unread = 0; SW:SwitchTab("Messages") end)
+        -- listFilter reset to "all" for the same reason as the Bookmarks/
+        -- global-search Jump buttons - a Watchlist entry can be excluded
+        -- by whatever filter pill happened to be active on the Messages
+        -- tab, silently overriding this selection right back.
+        row.open:SetScript("OnClick", function() SW.ui.selectedKey = conversation.key; conversation.unread = 0; SW.ui.listFilter = "all"; SW:SwitchTab("Messages") end)
         row.remove:SetScript("OnClick", function() SW:ToggleFavorite(conversation.key) end)
         row.delete:SetScript("OnClick", function() SW:DeleteConversation(conversation.key) end)
         y = y - 48
     end
     poolFinish(content)
+    content:SetSize(width, math.max(panel.list:GetHeight(), -y + 5))
+end
+
+function SW:BuildBookmarksPanel()
+    local panel = self:NewPanel("Bookmarks")
+    -- Same inset content box as the other tabs - see BuildWatchlistPanel.
+    panel.box = inset(panel)
+    panel.box:SetAllPoints()
+    local icon = panel.box:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(24, 24)
+    icon:SetPoint("TOPLEFT", 10, -10)
+    icon:SetTexture("Interface\\Icons\\INV_Misc_Note_01")
+    local heading = text(panel.box, "Bookmarks", "GameFontNormalLarge")
+    heading:SetPoint("LEFT", icon, "RIGHT", 6, 1)
+    local hint = text(panel.box, "Every message you've starred, across every conversation.", "GameFontDisableSmall")
+    hint:SetPoint("TOPLEFT", 12, -39)
+    panel.list = scroll(panel.box)
+    panel.list:SetPoint("TOPLEFT", 12, -68)
+    panel.list:SetPoint("BOTTOMRIGHT", -28, 10)
+end
+
+-- Same flat row-per-message shape as global search results
+-- (RenderGlobalSearchResults/populateMessageResultRow/poolResultRow) - a
+-- bookmark is conceptually just a standing, saved search.
+function SW:RefreshBookmarksPanel()
+    local panel = self.ui.panels.Bookmarks
+    local results = self:GetBookmarkedMessages()
+    local content = panel.list.content
+    content.emptyLabel = content.emptyLabel or text(content, "", "GameFontDisableSmall")
+    content.resultPool = content.resultPool or { items = {}, count = 0 }
+    content.resultPool.count = 0
+    local width = math.max(450, panel.list:GetWidth() - 4)
+    local y = 0
+    if #results == 0 then
+        content.emptyLabel:SetText("No bookmarked messages yet - click the star next to any message to bookmark it.")
+        content.emptyLabel:ClearAllPoints()
+        content.emptyLabel:SetPoint("TOPLEFT", 8, -8)
+        content.emptyLabel:Show()
+        y = -32
+    else
+        content.emptyLabel:Hide()
+        for _, entry in ipairs(results) do
+            local conversation, message = entry.conversation, entry.message
+            local row = poolResultRow(content)
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", 0, y)
+            row:SetSize(width, 44)
+            populateMessageResultRow(row, conversation, message, function()
+                local messagesPanel = SW.ui.panels.Messages
+                if messagesPanel then
+                    messagesPanel.scrollToMessage = message
+                    messagesPanel.searchAllChats = false
+                    if messagesPanel.chatSearchAll then messagesPanel.chatSearchAll:SetChecked(false) end
+                    messagesPanel.chatSearchText = nil
+                    if messagesPanel.chatSearch then
+                        messagesPanel.chatSearch:ClearFocus()
+                        messagesPanel.chatSearch:SetText(messagesPanel.chatSearch.hint or "")
+                    end
+                end
+                SW.ui.selectedKey = conversation.key
+                -- Same fix as the global-search Jump button - a bookmarked
+                -- message can be from any conversation type, and an active
+                -- list filter (e.g. "DM") excluding that type let
+                -- RefreshMessagesPanel's "keep selection valid" check
+                -- silently override the jump target right back.
+                SW.ui.listFilter = "all"
+                SW:SwitchTab("Messages")
+            end)
+            y = y - 48
+        end
+    end
+    for i = content.resultPool.count + 1, #content.resultPool.items do content.resultPool.items[i]:Hide() end
     content:SetSize(width, math.max(panel.list:GetHeight(), -y + 5))
 end
 
@@ -1899,19 +2651,29 @@ end
 
 function SW:BuildSettingsPanel()
     local panel = self:NewPanel("Settings")
-    panel.scroll = scroll(panel)
+    -- Same inset content box as the other tabs - see BuildWatchlistPanel.
+    panel.box = inset(panel)
+    panel.box:SetAllPoints()
+
+    -- Fixed header outside the scroll content, like every other tab (see
+    -- BuildWatchlistPanel) - it used to live inside the scrolled area,
+    -- which put its icon out of alignment with Watchlist/Bookmarks/
+    -- Changelog's headers and made it scroll out of view with everything
+    -- else instead of staying put.
+    local icon = panel.box:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(24, 24)
+    icon:SetPoint("TOPLEFT", 10, -10)
+    icon:SetTexture("Interface\\Icons\\INV_Misc_Wrench_01")
+    local heading = text(panel.box, "Settings", "GameFontNormalLarge")
+    heading:SetPoint("LEFT", icon, "RIGHT", 6, 1)
+
+    panel.scroll = scroll(panel.box)
     -- The scrollbar renders to the right of the scroll frame's own edge, not
-    -- inside it - SetAllPoints() let it hang off the window's right border.
-    panel.scroll:SetPoint("TOPLEFT", 0, 0)
-    panel.scroll:SetPoint("BOTTOMRIGHT", -26, 0)
+    -- inside it - SetAllPoints() let it hang off the box's right border.
+    panel.scroll:SetPoint("TOPLEFT", 8, -44)
+    panel.scroll:SetPoint("BOTTOMRIGHT", -30, 8)
     local content = panel.scroll.content
     panel.content = content
-    local icon = content:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(24, 24)
-    icon:SetPoint("TOPLEFT", 2, -10)
-    icon:SetTexture("Interface\\Icons\\INV_Misc_Wrench_01")
-    local heading = text(content, "Settings", "GameFontNormalLarge")
-    heading:SetPoint("LEFT", icon, "RIGHT", 6, 1)
 
     -- Every section below anchors its Y to the bottom of the previous
     -- widget, so inserting or resizing one row can never again silently
@@ -1934,7 +2696,27 @@ function SW:BuildSettingsPanel()
     -- enough to visibly clip the first letter. A fixed left margin absorbs
     -- that instead of having to rework every call site's nudge value.
     local MARGIN = 10
-    local prev = icon
+    -- Number fields ("DM conversations to keep" etc.) only ever hold 3-4
+    -- digit values - the old 60px width with left-justified text left a lot
+    -- of dead space in front of short numbers and looked odd.
+    local FIELD_WIDTH = 40
+    -- Measures a caption's actual rendered width instead of guessing a
+    -- pixel value by eye - guessed offsets either left a visible gap (too
+    -- generous) or, tuned per-row instead of per-column, left same-column
+    -- fields at different X on different rows (a caption-length-dependent
+    -- offset makes a short caption's field sit further left than a long
+    -- caption's field right below it).
+    local function labelWidth(str)
+        local probe = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        probe:SetText(str)
+        local w = probe:GetStringWidth() or 100
+        probe:Hide()
+        return w
+    end
+    local topAnchor = CreateFrame("Frame", nil, content)
+    topAnchor:SetSize(1, 1)
+    topAnchor:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
+    local prev = topAnchor
     local function belowPrev(widget, x, gap)
         widget:ClearAllPoints()
         widget:SetPoint("TOP", prev, "BOTTOM", 0, -(gap or 10))
@@ -1943,30 +2725,76 @@ function SW:BuildSettingsPanel()
         return widget
     end
 
-    local function addCheckbox(label, setting)
+    -- General: three checkboxes in one row instead of stacked - each
+    -- anchors off the previous one's own label (not a fixed pixel step),
+    -- since the three labels are different lengths.
+    local generalHeading = text(content, "General", "GameFontNormal")
+    belowPrev(generalHeading, 0, 6)
+    local function addInlineCheckbox(label, setting, anchorTo)
         local box = checkButton(content)
-        belowPrev(box, -2, 8)
+        if anchorTo then
+            box:SetPoint("LEFT", anchorTo.label, "RIGHT", 26, 0)
+            box:SetPoint("TOP", anchorTo, "TOP", 0, 0)
+        else
+            box:SetPoint("TOP", generalHeading, "BOTTOM", 0, -10)
+            box:SetPoint("LEFT", content, "LEFT", MARGIN, 0)
+        end
         box.label = text(content, label, "GameFontHighlightSmall")
         box.label:SetPoint("LEFT", box, "RIGHT", 2, 0)
         box:SetScript("OnClick", function(self) SW:SetSetting(setting, self:GetChecked() and true or false) end)
         return box
     end
-    panel.enabled = addCheckbox("Enable SaveWhispers", "enabled")
-    panel.minimap = addCheckbox("Show minimap button", "showMinimap")
-    panel.sortByActivity = addCheckbox("Sort chats by recent activity (unchecked: alphabetical)", "sortByActivity")
+    panel.enabled = addInlineCheckbox("Enable SaveWhispers", "enabled")
+    panel.minimap = addInlineCheckbox("Show minimap button", "showMinimap", panel.enabled)
+    panel.sortByActivity = addInlineCheckbox("Sort by recent activity", "sortByActivity", panel.minimap)
+    -- The full explanation used to run inline as part of the checkbox
+    -- label, which was the widest thing in the row by far - a tooltip
+    -- keeps the row compact without losing the explanation.
+    panel.sortByActivity:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Unchecked: alphabetical order instead.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    panel.sortByActivity:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    prev = panel.enabled
 
-    -- Minimap badge category toggles
+    -- Two columns sharing the same top edge: Minimap Badge Counts (left)
+    -- and Display Scale (right). Each column tracks its own bottom via its
+    -- own `place` closure so one column's height never affects the other's
+    -- layout; a zero-size spacer below whichever column is actually taller
+    -- becomes the anchor for everything that follows.
+    local columnTop = prev
+    -- Tight enough to clear the left column's widest row (the "Guild"
+    -- badge checkbox+label) while leaving the whole layout narrower than
+    -- the window's default width - 380 ran past the visible scroll area at
+    -- the window's normal (not manually widened) size.
+    local COLUMN_X = 300
+    local function makeColumn(x)
+        local col = { prev = columnTop }
+        function col.place(widget, gap)
+            widget:ClearAllPoints()
+            widget:SetPoint("TOP", col.prev, "BOTTOM", 0, -(gap or 10))
+            widget:SetPoint("LEFT", content, "LEFT", MARGIN + x, 0)
+            col.prev = widget
+            return widget
+        end
+        return col
+    end
+    local leftCol = makeColumn(0)
+    local rightCol = makeColumn(COLUMN_X)
+
+    -- Left column: minimap badge category toggles.
     local badgeHeading = text(content, "Minimap Badge Counts", "GameFontNormal")
-    belowPrev(badgeHeading, -2, 20)
-    local badgeHint = text(content, "Which categories add to the unread-count badge on the minimap button.", "GameFontDisableSmall")
-    belowPrev(badgeHint, 0, 4)
+    leftCol.place(badgeHeading, 20)
+    local badgeHint = text(content, "Which categories add to the unread-count badge.", "GameFontDisableSmall")
+    leftCol.place(badgeHint, 4)
     panel.badgeChecks = {}
     local function addBadgeCheckbox(label, setting, anchorTo, xOffset)
         local box = checkButton(content)
         if anchorTo then
             box:SetPoint("TOPLEFT", anchorTo, "TOPLEFT", xOffset, 0)
         else
-            belowPrev(box, -2, 10)
+            leftCol.place(box, 10)
         end
         box.label = text(content, label, "GameFontHighlightSmall")
         box.label:SetPoint("LEFT", box, "RIGHT", 2, 0)
@@ -1975,117 +2803,27 @@ function SW:BuildSettingsPanel()
         return box
     end
     local badgeDM = addBadgeCheckbox("DMs", "badgeCountsDM")
-    addBadgeCheckbox("Guild", "badgeCountsGuild", badgeDM, 200)
+    addBadgeCheckbox("Guild", "badgeCountsGuild", badgeDM, 110)
     local badgeGroup = addBadgeCheckbox("Group", "badgeCountsGroup")
-    addBadgeCheckbox("Channels", "badgeCountsChannel", badgeGroup, 200)
+    addBadgeCheckbox("Channels", "badgeCountsChannel", badgeGroup, 110)
 
-    -- Conversations & Sessions to Keep (count limits - no "unlimited"
-    -- option here, unlike the message caps below: an unbounded number of
-    -- conversations directly grows the always-rendered list, a real
-    -- performance cost rather than just storage).
-    local keepHeading = text(content, "Conversations & Sessions to Keep", "GameFontNormal")
-    belowPrev(keepHeading, -2, 20)
-    local keepHint = text(content, "The oldest entry is dropped once a limit is reached.", "GameFontDisableSmall")
-    belowPrev(keepHint, 0, 4)
-    panel.limitFields = {}
-    local function addLimitField(label, setting, minimum, default, anchorTo, xOffset)
-        local caption = text(content, label, "GameFontHighlightSmall")
-        caption:SetWidth(190)
-        if anchorTo then
-            caption:SetPoint("TOPLEFT", anchorTo, "TOPLEFT", xOffset, 0)
-        else
-            belowPrev(caption, 8, 10)
-        end
-        local field = numberField(content, 60, 20)
-        -- TOPLEFT-relative, not LEFT (which centers vertically on the
-        -- target) - caption's font-string height is much smaller than the
-        -- field's, so a center anchor let the field bleed upward into the
-        -- row above as well as downward into the row below.
-        field:SetPoint("TOPLEFT", caption, "TOPLEFT", 196, 3)
-        local function apply()
-            local value = tonumber(field:GetText())
-            if not value or value < minimum then value = SW.DB.settings[setting] or default end
-            value = math.floor(value)
-            SW.DB.settings[setting] = value
-            field:ClearFocus()
-            -- Border flash only, no text - these fields sit two-per-row
-            -- with no free space on any side (a sibling field's caption
-            -- immediately right, the next row immediately below), so any
-            -- text placement landed on top of something.
-            flashSaved(field, false)
-            SW:RefreshSettingsPanel()
-        end
-        field:SetScript("OnEnterPressed", apply)
-        field:SetScript("OnEditFocusLost", apply)
-        panel.limitFields[#panel.limitFields + 1] = { field = field, setting = setting, minimum = minimum, default = default }
-        -- Only the first field of a row should advance the shared anchor -
-        -- a sibling placed via anchorTo shares that same row and must not
-        -- push the next section down twice.
-        if not anchorTo then prev = field end
-        return caption
-    end
-    local dmKeepCaption = addLimitField("DM conversations to keep", "maxConversations", 10, 200)
-    addLimitField("Party/Raid sessions to keep", "maxGroupSessions", 10, 200, dmKeepCaption, 260)
-    addLimitField("Channels to keep", "maxChannels", 5, 50)
-
-    -- Messages to Keep per Conversation (per-category message caps, each
-    -- with a "No limit" toggle - safe to uncap now that chat rendering is
-    -- capped to the last 200 messages regardless of how many are stored).
-    local msgHeading = text(content, "Messages to Keep per Conversation", "GameFontNormal")
-    belowPrev(msgHeading, -2, 20)
-    local msgHint = text(content, "Applies per conversation - e.g. per DM, or per Party/Raid session.", "GameFontDisableSmall")
-    belowPrev(msgHint, 0, 4)
-    panel.messageLimitFields = {}
-    local function addMessageLimitField(label, setting, unlimitedSetting, minimum, default)
-        local caption = text(content, label, "GameFontHighlightSmall")
-        caption:SetWidth(190)
-        -- 14, not 10 - the checkbox below is centered on the field and can
-        -- be taller than it (32px native vs. field's 20px), so it needs a
-        -- bit more headroom above to clear the row above without bleeding
-        -- into it (see the centering comment below).
-        belowPrev(caption, 8, 14)
-        local field = numberField(content, 60, 20)
-        field:SetPoint("TOPLEFT", caption, "TOPLEFT", 196, 3)
-        local unlimitedBox = checkButton(content)
-        -- Centered on the field's own height, not just nudged down a fixed
-        -- amount - the checkbox is a different size per theme (32px native
-        -- UICheckButtonTemplate vs. 24px on the flat themes), and a fixed
-        -- offset left it visibly lower than the field on every theme.
-        local boxHeight = unlimitedBox:GetHeight() or 24
-        unlimitedBox:SetPoint("TOPLEFT", field, "TOPRIGHT", 14, (boxHeight - 20) / 2)
-        local unlimitedLabel = text(content, "No limit", "GameFontHighlightSmall")
-        unlimitedLabel:SetPoint("LEFT", unlimitedBox, "RIGHT", 2, 0)
-        local function apply()
-            local value = tonumber(field:GetText())
-            if not value or value < minimum then value = SW.DB.settings[setting] or default end
-            value = math.floor(value)
-            SW.DB.settings[setting] = value
-            field:ClearFocus()
-            flashSaved(field, unlimitedLabel)
-            SW:RefreshSettingsPanel()
-        end
-        field:SetScript("OnEnterPressed", apply)
-        field:SetScript("OnEditFocusLost", apply)
-        unlimitedBox:SetScript("OnClick", function(self)
-            SW.DB.settings[unlimitedSetting] = self:GetChecked() and true or false
-            flashSaved(field, unlimitedLabel)
-            SW:RefreshSettingsPanel()
-        end)
-        panel.messageLimitFields[#panel.messageLimitFields + 1] = {
-            field = field, unlimitedBox = unlimitedBox, setting = setting,
-            unlimitedSetting = unlimitedSetting, minimum = minimum, default = default,
-        }
-        prev = unlimitedBox
-    end
-    addMessageLimitField("DM messages", "maxDMMessages", "dmMessagesUnlimited", 50, 1500)
-    addMessageLimitField("Guild Chat messages", "maxGuildMessages", "guildMessagesUnlimited", 50, 1500)
-    addMessageLimitField("Party/Raid session messages", "maxPartyRaidMessages", "partyRaidMessagesUnlimited", 50, 1500)
-    addMessageLimitField("Channel messages", "maxChannelMessages", "channelMessagesUnlimited", 50, 1500)
+    -- Right column: the two scale sliders, now under their own heading -
+    -- they used to just trail after Messages to Keep with nothing labeling
+    -- them as a section.
+    local scaleHeading = text(content, "Display Scale", "GameFontNormal")
+    rightCol.place(scaleHeading, 20)
+    local scaleHint = text(content, "Adjust the window and chat text size.", "GameFontDisableSmall")
+    rightCol.place(scaleHint, 4)
 
     panel.sliders = {}
-    local function addSlider(id, setting, channel, label, minimum, maximum, step)
+    local function addSlider(id, setting, channel, label, minimum, maximum, step, place)
+        place = place or belowPrev
         local slider = CreateFrame("Slider", "SaveWhispers" .. id, content, "OptionsSliderTemplate")
-        belowPrev(slider, 12, 40)
+        -- 26, not the checkbox column's 10 - the slider's own label sits
+        -- above the slider itself and needs the extra headroom, but 40 left
+        -- a visibly bigger gap under this column's hint text than the left
+        -- column's checkboxes get under theirs.
+        place(slider, 26)
         slider:SetWidth(250); slider:SetHeight(18)
         slider:SetMinMaxValues(minimum or 0, maximum or 1); slider:SetValueStep(step or 0.05)
         if slider.SetObeyStepOnDrag then slider:SetObeyStepOnDrag(true) end
@@ -2152,13 +2890,169 @@ function SW:BuildSettingsPanel()
             GameTooltip:Show()
         end)
         resetButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        panel.sliders[#panel.sliders + 1] = { slider = slider, setting = setting, channel = channel }
+        panel.sliders[#panel.sliders + 1] = { slider = slider, resetButton = resetButton, setting = setting, channel = channel }
     end
-    addSlider("UIScale", "uiScale", nil, "Interface scale", 0.70, 1.30, 0.05)
-    addSlider("ChatScale", "chatScale", nil, "Chat text scale", 0.70, 1.30, 0.05)
+    addSlider("UIScale", "uiScale", nil, "Interface scale", 0.70, 1.30, 0.05, rightCol.place)
+    addSlider("ChatScale", "chatScale", nil, "Chat text scale", 0.70, 1.30, 0.05, rightCol.place)
+
+    -- Whichever of the two columns ended up taller determines where the
+    -- rest of the panel picks back up - a zero-size spacer anchored below
+    -- that column's last widget keeps the single-column `belowPrev` chain
+    -- below working exactly as before.
+    local leftBottom = leftCol.prev:GetBottom() or 0
+    local rightBottom = rightCol.prev:GetBottom() or 0
+    local columnsEnd = CreateFrame("Frame", nil, content)
+    columnsEnd:SetSize(1, 1)
+    columnsEnd:SetPoint("TOP", (leftBottom <= rightBottom) and leftCol.prev or rightCol.prev, "BOTTOM", 0, 0)
+    columnsEnd:SetPoint("LEFT", content, "LEFT", MARGIN, 0)
+    prev = columnsEnd
+
+    -- Conversations & Sessions to Keep (count limits - no "unlimited"
+    -- option here, unlike the message caps below: an unbounded number of
+    -- conversations directly grows the always-rendered list, a real
+    -- performance cost rather than just storage). All three fields share
+    -- one row instead of 2-then-1.
+    local keepHeading = text(content, "Conversations & Sessions to Keep", "GameFontNormal")
+    belowPrev(keepHeading, 0, 20)
+    local keepHint = text(content, "The oldest entry is dropped once a limit is reached.", "GameFontDisableSmall")
+    belowPrev(keepHint, 0, 4)
+    panel.limitFields = {}
+    local function addLimitField(label, setting, minimum, default, anchorTo, xOffset)
+        local caption = text(content, label, "GameFontHighlightSmall")
+        if anchorTo then
+            caption:SetPoint("TOPLEFT", anchorTo, "TOPLEFT", xOffset, 0)
+        else
+            belowPrev(caption, 0, 10)
+        end
+        local field = numberField(content, FIELD_WIDTH, 20)
+        -- Anchored to caption's actual (unfixed) text width, not a fixed
+        -- 190px box - a fixed-width caption box left a big gap in front of
+        -- every field shorter than "Party/Raid sessions to keep", the
+        -- longest label. TOP/LEFT set separately (not a single "LEFT"
+        -- point, which centers vertically on the target) - caption's
+        -- font-string height is much smaller than the field's, so a center
+        -- anchor let the field bleed upward into the row above as well as
+        -- downward into the row below.
+        field:SetPoint("TOP", caption, "TOP", 0, 3)
+        field:SetPoint("LEFT", caption, "RIGHT", 6, 0)
+        local function apply()
+            local value = tonumber(field:GetText())
+            if not value or value < minimum then value = SW.DB.settings[setting] or default end
+            value = math.floor(value)
+            SW.DB.settings[setting] = value
+            field:ClearFocus()
+            -- Border flash only, no text - these fields sit three-per-row
+            -- with no free space on any side, so any text placement landed
+            -- on top of something.
+            flashSaved(field, false)
+            SW:RefreshSettingsPanel()
+        end
+        field:SetScript("OnEnterPressed", apply)
+        field:SetScript("OnEditFocusLost", apply)
+        panel.limitFields[#panel.limitFields + 1] = { field = field, setting = setting, minimum = minimum, default = default }
+        -- Only the first field of a row should advance the shared anchor -
+        -- a sibling placed via anchorTo shares that same row and must not
+        -- push the next section down twice.
+        if not anchorTo then prev = field end
+        return caption
+    end
+    -- Column offsets computed from the actual caption widths plus a small
+    -- fixed gap, instead of guessed pixel values - guarantees the tightest
+    -- gap that still can't overlap regardless of the client's font metrics.
+    local keepGap = 16
+    local keepCol2 = labelWidth("DM conversations to keep") + 6 + FIELD_WIDTH + keepGap
+    local keepCol3 = keepCol2 + labelWidth("Party/Raid sessions to keep") + 6 + FIELD_WIDTH + keepGap
+    local dmKeepCaption = addLimitField("DM conversations to keep", "maxConversations", 10, 200)
+    addLimitField("Party/Raid sessions to keep", "maxGroupSessions", 10, 200, dmKeepCaption, keepCol2)
+    addLimitField("Channels to keep", "maxChannels", 5, 50, dmKeepCaption, keepCol3)
+
+    -- Messages to Keep per Conversation (per-category message caps, each
+    -- with a "No limit" toggle - safe to uncap now that chat rendering is
+    -- capped to the last 200 messages regardless of how many are stored).
+    -- 2x2 grid (DM/Guild, then Party-Raid/Channel) instead of 4 stacked
+    -- rows - halves the vertical space this section needs.
+    local msgHeading = text(content, "Messages to Keep per Conversation", "GameFontNormal")
+    belowPrev(msgHeading, 0, 20)
+    local msgHint = text(content, "Applies per conversation - e.g. per DM, or per Party/Raid session.", "GameFontDisableSmall")
+    belowPrev(msgHint, 0, 4)
+    panel.messageLimitFields = {}
+    -- Both rows of a column share one fieldOffset (the wider of the two
+    -- captions in that column + a gap), not each row's own caption width -
+    -- "DM messages" is much shorter than "Party/Raid session messages"
+    -- right below it, and anchoring each field to its own caption's width
+    -- left the two fields (and the whole row after them) at different X,
+    -- a ragged left edge instead of a lined-up column of boxes.
+    local col1FieldOffset = math.max(labelWidth("DM messages"), labelWidth("Party/Raid session messages")) + 6
+    local col2FieldOffset = math.max(labelWidth("Guild Chat messages"), labelWidth("Channel messages")) + 6
+    -- Measured, not a hardcoded 24 - the native WoW Classic theme's
+    -- checkButton() is 32px (UICheckButtonTemplate's default), not the
+    -- flat themes' 24px, and a hardcoded value here only ever got tested
+    -- against ElvUI, silently running column 2 too close to column 1 on
+    -- the Classic theme specifically.
+    local checkboxWidthProbe = checkButton(content)
+    local CHECKBOX_WIDTH = checkboxWidthProbe:GetWidth() or 24
+    checkboxWidthProbe:Hide()
+    local MSG_COLUMN_X = col1FieldOffset + FIELD_WIDTH + 14 + CHECKBOX_WIDTH + 2 + labelWidth("No limit") + 16
+    local function addMessageLimitField(label, setting, unlimitedSetting, minimum, default, anchorTo, xOffset, fieldOffset)
+        local caption = text(content, label, "GameFontHighlightSmall")
+        if anchorTo then
+            caption:SetPoint("TOPLEFT", anchorTo, "TOPLEFT", xOffset, 0)
+        else
+            -- 14, not 10 - the checkbox below is centered on the field and can
+            -- be taller than it (32px native vs. field's 20px), so it needs a
+            -- bit more headroom above to clear the row above without bleeding
+            -- into it (see the centering comment below).
+            belowPrev(caption, 0, 14)
+        end
+        local field = numberField(content, FIELD_WIDTH, 20)
+        -- Anchored to the shared per-column offset (see col1FieldOffset/
+        -- col2FieldOffset above), not this caption's own width - keeps
+        -- every field in a column at the same X regardless of which row's
+        -- caption happens to be shorter.
+        field:SetPoint("TOP", caption, "TOP", 0, 3)
+        field:SetPoint("LEFT", caption, "LEFT", fieldOffset, 0)
+        local unlimitedBox = checkButton(content)
+        -- Centered on the field's own height, not just nudged down a fixed
+        -- amount - the checkbox is a different size per theme (32px native
+        -- UICheckButtonTemplate vs. 24px on the flat themes), and a fixed
+        -- offset left it visibly lower than the field on every theme.
+        local boxHeight = unlimitedBox:GetHeight() or 24
+        unlimitedBox:SetPoint("TOPLEFT", field, "TOPRIGHT", 14, (boxHeight - 20) / 2)
+        local unlimitedLabel = text(content, "No limit", "GameFontHighlightSmall")
+        unlimitedLabel:SetPoint("LEFT", unlimitedBox, "RIGHT", 2, 0)
+        local function apply()
+            local value = tonumber(field:GetText())
+            if not value or value < minimum then value = SW.DB.settings[setting] or default end
+            value = math.floor(value)
+            SW.DB.settings[setting] = value
+            field:ClearFocus()
+            flashSaved(field, unlimitedLabel)
+            SW:RefreshSettingsPanel()
+        end
+        field:SetScript("OnEnterPressed", apply)
+        field:SetScript("OnEditFocusLost", apply)
+        unlimitedBox:SetScript("OnClick", function(self)
+            SW.DB.settings[unlimitedSetting] = self:GetChecked() and true or false
+            flashSaved(field, unlimitedLabel)
+            SW:RefreshSettingsPanel()
+        end)
+        panel.messageLimitFields[#panel.messageLimitFields + 1] = {
+            field = field, unlimitedBox = unlimitedBox, unlimitedLabel = unlimitedLabel, setting = setting,
+            unlimitedSetting = unlimitedSetting, minimum = minimum, default = default,
+        }
+        -- Only the first field of a row should advance the shared anchor -
+        -- a sibling placed via anchorTo shares that same row and must not
+        -- push the next section down twice.
+        if not anchorTo then prev = unlimitedBox end
+        return caption
+    end
+    local dmMsgCaption = addMessageLimitField("DM messages", "maxDMMessages", "dmMessagesUnlimited", 50, 1500, nil, nil, col1FieldOffset)
+    addMessageLimitField("Guild Chat messages", "maxGuildMessages", "guildMessagesUnlimited", 50, 1500, dmMsgCaption, MSG_COLUMN_X, col2FieldOffset)
+    local partyMsgCaption = addMessageLimitField("Party/Raid session messages", "maxPartyRaidMessages", "partyRaidMessagesUnlimited", 50, 1500, nil, nil, col1FieldOffset)
+    addMessageLimitField("Channel messages", "maxChannelMessages", "channelMessagesUnlimited", 50, 1500, partyMsgCaption, MSG_COLUMN_X, col2FieldOffset)
 
     local styleHeading = text(content, "UI Style", "GameFontNormal")
-    belowPrev(styleHeading, -2, 45)
+    belowPrev(styleHeading, 0, 30)
     local styleHint = text(content, "Changing this applies after a UI reload.", "GameFontDisableSmall")
     belowPrev(styleHint, 0, 4)
     local function themePill(themeKey, label)
@@ -2170,7 +3064,7 @@ function SW:BuildSettingsPanel()
         return pill
     end
     panel.themeClassic = themePill("classic", "WoW Classic")
-    belowPrev(panel.themeClassic, 8, 10)
+    belowPrev(panel.themeClassic, 0, 10)
     panel.themeElvui = themePill("elvui", "ElvUI")
     panel.themeElvui:SetPoint("LEFT", panel.themeClassic, "RIGHT", 6, 0)
     panel.themeModern = themePill("modern", "Modern SaveWhispers")
@@ -2182,20 +3076,20 @@ function SW:BuildSettingsPanel()
     panel.reloadUI:SetScript("OnClick", function() ReloadUI() end)
 
     local dangerHeading = text(content, "Danger Zone", "GameFontNormal", 0.9, 0.3, 0.3)
-    belowPrev(dangerHeading, -6, 24)
+    belowPrev(dangerHeading, 0, 24)
     local dangerHint = text(content, "These permanently delete saved history - each asks for confirmation first.", "GameFontDisableSmall")
     belowPrev(dangerHint, 0, 4)
-    panel.deleteDMs = fitButton(button(content, "Delete all DMs", 10, 22))
-    belowPrev(panel.deleteDMs, 8, 14)
+    panel.deleteDMs = fitButton(button(content, "Delete All DMs", 10, 22))
+    belowPrev(panel.deleteDMs, 0, 14)
     panel.deleteDMs:SetScript("OnClick", function() StaticPopup_Show("SAVEWHISPERS_CONFIRM_DELETE_DMS") end)
     panel.deleteGuild = fitButton(button(content, "Delete Guild Chat", 10, 22))
     panel.deleteGuild:SetPoint("LEFT", panel.deleteDMs, "RIGHT", 6, 0)
     panel.deleteGuild:SetScript("OnClick", function() StaticPopup_Show("SAVEWHISPERS_CONFIRM_DELETE_GUILD") end)
-    panel.deleteGroup = fitButton(button(content, "Delete Party/Raid sessions", 10, 22))
+    panel.deleteGroup = fitButton(button(content, "Delete Party/Raid Sessions", 10, 22))
     panel.deleteGroup:SetPoint("LEFT", panel.deleteGuild, "RIGHT", 6, 0)
     panel.deleteGroup:SetScript("OnClick", function() StaticPopup_Show("SAVEWHISPERS_CONFIRM_DELETE_GROUP") end)
-    panel.deleteAll = fitButton(button(content, "Delete ALL chats", 10, 22))
-    belowPrev(panel.deleteAll, 8, 8)
+    panel.deleteAll = fitButton(button(content, "Delete All Chats", 10, 22))
+    belowPrev(panel.deleteAll, 0, 8)
     panel.deleteAll:SetScript("OnClick", function() StaticPopup_Show("SAVEWHISPERS_CONFIRM_DELETE_ALL") end)
 
     -- Measured from the actual placed widgets, not a hardcoded guess - a
@@ -2213,7 +3107,32 @@ function SW:BuildSettingsPanel()
     local usedHeight = 1150
     local top, bottom = content:GetTop(), panel.deleteAll:GetBottom()
     if top and bottom then usedHeight = math.max(top - bottom + 20, 400) end
-    content:SetSize(800, usedHeight)
+    -- Width measured the same way as height, from the actual widgets
+    -- placed - a hardcoded guess here (previously a flat 800, then 900) is
+    -- exactly what caused both the "wasted empty space" complaint and later
+    -- the opposite "columns run off the edge" complaint: neither number
+    -- actually matched what the two-column/grid sections above need.
+    local contentLeft = content:GetLeft()
+    local rightEdge = 0
+    for _, entry in ipairs(panel.limitFields) do
+        local r = entry.field:GetRight()
+        if r and r > rightEdge then rightEdge = r end
+    end
+    for _, entry in ipairs(panel.messageLimitFields) do
+        local r = entry.unlimitedLabel:GetRight()
+        if r and r > rightEdge then rightEdge = r end
+    end
+    for _, widget in ipairs({ panel.reloadUI, panel.deleteGroup }) do
+        local r = widget:GetRight()
+        if r and r > rightEdge then rightEdge = r end
+    end
+    for _, entry in ipairs(panel.sliders) do
+        local r = entry.resetButton:GetRight()
+        if r and r > rightEdge then rightEdge = r end
+    end
+    local usedWidth = 700
+    if contentLeft and rightEdge > 0 then usedWidth = math.max(rightEdge - contentLeft + 16, 700) end
+    content:SetSize(usedWidth, usedHeight)
 end
 
 function SW:RefreshSettingsPanel()
@@ -2263,6 +3182,25 @@ function SW:RefreshSettingsPanel()
 end
 
 local CHANGELOG = {
+    {
+        version = "V1.3",
+        credit = "Developer: Gabbajoe",
+        entries = {
+            "Bookmark any message with the star icon next to it - bookmarked messages are exempt from the per-category message cap, and a new Bookmarks tab lists all of them across every conversation with a Jump button.",
+            "Search chat text, either within the open conversation or across everything at once (\"All Chats\"); jumping to a result scrolls to and briefly highlights that exact message.",
+            "Chat history now loads more as you scroll up instead of stopping hard at the last 200 messages - applies to normal browsing and search alike.",
+            "New messages that arrive while you're scrolled up reading history no longer yank the view down to the bottom - a small \"N new messages\" button appears instead, click to jump down.",
+            "Members popup (Party/Raid) is smaller, sizes itself to the group and scrolls past 20 members, and names are individually clickable to copy just that one.",
+            "Settings tab reorganized into a more compact two-column layout so most of it fits without scrolling.",
+            "Theme-aware logo (window title + minimap button) and custom scrollbar arrows/resize grip per UI Style, instead of tinted Classic Blizzard art on the flat themes.",
+            "Escape now closes the SaveWhispers window and its Members/Copy popups, like any other Blizzard window.",
+            "Button labels made consistent (Title Case) throughout the addon.",
+            "Fixed: the window couldn't be resized to fully fill the screen, always leaving a margin.",
+            "Fixed: Party/Raid chat could occasionally sort out of chronological order against other conversations.",
+            "Fixed: switching characters mid-session (e.g. logging out of one character straight into a group on another) could keep writing into the previous character's Party/Raid log.",
+            "Fixed: the ElvUI theme's window border was a flat, unstyled gray instead of ElvUI's own accent color.",
+        },
+    },
     {
         version = "V1.2",
         credit = "Developer: Gabbajoe",
@@ -2317,15 +3255,18 @@ end
 
 function SW:BuildChangelogPanel()
     local panel = self:NewPanel("Changelog")
-    local icon = panel:CreateTexture(nil, "ARTWORK")
+    -- Same inset content box as the other tabs - see BuildWatchlistPanel.
+    panel.box = inset(panel)
+    panel.box:SetAllPoints()
+    local icon = panel.box:CreateTexture(nil, "ARTWORK")
     icon:SetSize(24, 24)
-    icon:SetPoint("TOPLEFT", 2, -10)
+    icon:SetPoint("TOPLEFT", 10, -10)
     icon:SetTexture("Interface\\Icons\\INV_Misc_Book_09")
-    local heading = text(panel, "Changelog", "GameFontNormalLarge")
+    local heading = text(panel.box, "Changelog", "GameFontNormalLarge")
     heading:SetPoint("LEFT", icon, "RIGHT", 6, 1)
-    panel.list = scroll(panel)
-    panel.list:SetPoint("TOPLEFT", 4, -44)
-    panel.list:SetPoint("BOTTOMRIGHT", -22, 4)
+    panel.list = scroll(panel.box)
+    panel.list:SetPoint("TOPLEFT", 12, -44)
+    panel.list:SetPoint("BOTTOMRIGHT", -28, 10)
 end
 
 -- Each version gets its own heading line (not buried mid-paragraph) with
@@ -2383,9 +3324,11 @@ function SW:RefreshUI()
     -- nothing is lost, but background chat spam no longer rebuilds hidden UI.
     if not self.ui.frame:IsShown() then return end
     self.ui.frame:SetScale(self.DB.settings.uiScale or 1)
+    if self.ui.frame.UpdateResizeBounds then self.ui.frame.UpdateResizeBounds() end
     local active = self.ui.activeTab
     if active == "Messages" then self:RefreshMessagesPanel()
     elseif active == "Watchlist" then self:RefreshWatchlistPanel()
+    elseif active == "Bookmarks" then self:RefreshBookmarksPanel()
     elseif active == "Settings" then self:RefreshSettingsPanel()
     elseif active == "Changelog" then self:RefreshChangelogPanel()
     end
