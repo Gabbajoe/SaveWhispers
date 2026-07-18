@@ -1180,7 +1180,7 @@ function SW:BuildMessagesPanel()
     local function send()
         local conversation = SW:GetConversation(SW.ui.selectedKey)
         if not conversation then SW:Print("Select a conversation first."); return end
-        local ok, err = SW:SendWhisper(conversation.name, fieldValue(panel.message))
+        local ok, err = SW:SendConversationMessage(conversation, fieldValue(panel.message))
         if ok then
             panel.message:SetText("")
             panel.message:SetFocus()
@@ -1804,15 +1804,17 @@ function SW:RefreshChatPanel()
         else
             panel.delete:Hide()
         end
-        -- Guild/Party/Raid/channel chat is read-only in this addon (it
-        -- only ever mirrors what the real chat frame sends) - the input
-        -- row doesn't apply, so hide it instead of just disabling it.
-        panel.message:Hide(); panel.send:Hide()
+        -- Guild Chat can always be used here. Party/Raid sessions get the
+        -- same chat row only while they are the active group; old saved
+        -- sessions and manually added channels intentionally stay read-only.
+        local canSend = self:CanSendToConversation(conversation)
+        panel.message:SetShown(canSend); panel.send:SetShown(canSend)
+        if canSend then panel.message:Enable(); panel.send:Enable() else panel.message:ClearFocus() end
         panel.chat:ClearAllPoints()
         panel.chat:SetPoint("TOPLEFT", 16, -92)
         panel.chat:SetPoint("TOPRIGHT", -32, -92)
-        panel.chat:SetPoint("BOTTOMLEFT", panel.right, "BOTTOMLEFT", 16, 12)
-        panel.chat:SetPoint("BOTTOMRIGHT", panel.right, "BOTTOMRIGHT", -32, 12)
+        panel.chat:SetPoint("BOTTOMLEFT", panel.right, "BOTTOMLEFT", 16, canSend and 44 or 12)
+        panel.chat:SetPoint("BOTTOMRIGHT", panel.right, "BOTTOMRIGHT", -32, canSend and 44 or 12)
     else
         panel.star:Show(); panel.members:Hide(); panel.pin:Show(); panel.delete:Show(); panel.delete:SetText("Delete DM"); panel.message:Show(); panel.send:Show(); panel.message:Enable(); panel.send:Enable()
         panel.chat:ClearAllPoints()

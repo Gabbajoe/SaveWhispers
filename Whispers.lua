@@ -259,7 +259,11 @@ end
 function SW:EndGroupSession(kind)
     if not self.DB then return end
     local dbKey = kind == "raid" and "openRaidSessionKey" or "openPartySessionKey"
+    local hadSession = self.DB[dbKey] ~= nil
     self.DB[dbKey] = nil
+    -- The send row is shown only for the current Party/Raid session. Refresh
+    -- immediately when leaving so an old session becomes read-only at once.
+    if hadSession then self:NotifyDataChanged() end
 end
 
 -- A party converted to a raid (or back) is still the same group of people
@@ -478,6 +482,53 @@ function SW:SendWhisper(player, text)
     if not player or not text then return false, "Select a player and enter a message." end
     if not SendChatMessage then return false, "Whispers are unavailable in this game client." end
     SendChatMessage(text, "WHISPER", nil, player)
+    return true
+end
+
+-- Guild Chat is one permanent conversation and may always receive a message
+-- from SaveWhispers. Party/Raid conversations are historical sessions, so
+-- only the session currently open in the database is allowed to send; this
+-- keeps an old log from accidentally sending into a new, unrelated group.
+function SW:CanSendToConversation(conversation)
+    if not conversation then return false end
+    if not conversation.system then return true end
+    if conversation.channel == "guild" then return true end
+    if conversation.channel == "party" then
+        return self.DB and self.DB.openPartySessionKey == conversation.key
+            and IsInGroup and IsInGroup()
+            and not (IsInRaid and IsInRaid())
+    elseif conversation.channel == "raid" then
+        return self.DB and self.DB.openRaidSessionKey == conversation.key
+            and IsInRaid and IsInRaid()
+    end
+    return false
+end
+
+function SW:SendConversationMessage(conversation, text)
+    if not conversation then return false, "Select a conversation first." end
+    if not conversation.system then return self:SendWhisper(conversation.name, text) end
+
+    text = messageText(text)
+    if not text then return false, "Enter a message first." end
+    if not SendChatMessage then return false, "Chat is unavailable in this game client." end
+
+    local chatType
+    if conversation.channel == "guild" then
+        if GetGuildInfo and not GetGuildInfo("player") then
+            return false, "You are not in a guild."
+        end
+        chatType = "GUILD"
+    elseif conversation.channel == "party" and self:CanSendToConversation(conversation) then
+        chatType = "PARTY"
+    elseif conversation.channel == "raid" and self:CanSendToConversation(conversation) then
+        chatType = "RAID"
+    else
+        return false, "Only the current Party/Raid session can send messages."
+    end
+
+    -- Do not add the outgoing message here: the normal CHAT_MSG_* echo is
+    -- what records it, just like a message sent through Blizzard's chat box.
+    SendChatMessage(text, chatType)
     return true
 end
 
