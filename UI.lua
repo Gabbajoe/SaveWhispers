@@ -3387,6 +3387,14 @@ end
 
 local CHANGELOG = {
     {
+        version = "V1.4.1",
+        credit = "Developer: Gabbajoe",
+        entries = {
+            "Hotfix: updated for the current WoW Classic Era client (interface version bump) - the addon was showing as out of date and needing \"Load out of date AddOns\" enabled to load at all.",
+            "Added a proper addon icon (was missing in the AddOns list) and a Chat category so it's grouped with other chat addons there.",
+        },
+    },
+    {
         version = "V1.4",
         credit = "Developer: Gabbajoe",
         entries = {
