@@ -470,10 +470,55 @@ function SW:GetContactStatus(player)
         end
     end
     local conversation = self:GetConversation(self:GetPlayerKey(player))
+    -- A PING/PONG exchange (see PingContact/OnAddonMessage below) only
+    -- ever succeeds while the other side is actually online and has
+    -- SaveWhispers loaded - a much stronger signal than lastSeen below for
+    -- someone who isn't a friend or in your group, so it's checked first.
+    if conversation and conversation.lastAddonSeen and self:Now() - conversation.lastAddonSeen < 900 then
+        return "online"
+    end
     if conversation and conversation.lastSeen and self:Now() - conversation.lastSeen < 900 then
         return "online"
     end
     return "offline"
+end
+
+local function sendAddonMessage(prefix, message, channel, target)
+    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+        C_ChatInfo.SendAddonMessage(prefix, message, channel, target)
+    elseif SendAddonMessage then
+        SendAddonMessage(prefix, message, channel, target)
+    end
+end
+
+-- Sent once per cooldown window when opening a DM - see OnAddonMessage
+-- below and the lastAddonSeen check in GetContactStatus above.
+local PING_COOLDOWN = 120
+function SW:PingContact(conversation)
+    if not conversation or conversation.system then return end
+    local now = self:Now()
+    if conversation.lastPingSent and now - conversation.lastPingSent < PING_COOLDOWN then return end
+    conversation.lastPingSent = now
+    sendAddonMessage(self.ADDON_MESSAGE_PREFIX, "PING", "WHISPER", conversation.name)
+end
+
+-- A PING can only ever reach us if the sender is online right now (same as
+-- any whisper), so answering it is itself proof they have the addon too -
+-- replying isn't conditional on already knowing them. hasAddon/
+-- lastAddonSeen are only recorded against an existing conversation, not
+-- created from a ping alone - a stranger with SaveWhispers pinging out of
+-- nowhere shouldn't add a DM you never actually started.
+function SW:OnAddonMessage(prefix, message, channel, sender)
+    if prefix ~= self.ADDON_MESSAGE_PREFIX or channel ~= "WHISPER" then return end
+    if message ~= "PING" and message ~= "PONG" then return end
+    local conversation = self:GetConversation(self:GetPlayerKey(sender))
+    if conversation then
+        conversation.hasAddon = true
+        conversation.lastAddonSeen = self:Now()
+    end
+    if message == "PING" then
+        sendAddonMessage(self.ADDON_MESSAGE_PREFIX, "PONG", "WHISPER", sender)
+    end
 end
 
 function SW:SendWhisper(player, text)

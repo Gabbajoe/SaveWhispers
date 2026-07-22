@@ -5,10 +5,14 @@ _G.SaveWhispers = SW
 
 SW.name = "SaveWhispers"
 SW.shortName = "SW"
-SW.version = "1.3"
+SW.version = "1.4"
 SW.addonName = ADDON_NAME or "SaveWhispers"
 SW.BackdropTemplate = BackdropTemplateMixin and "BackdropTemplate" or nil
 SW.initialized = false
+-- Presence ping/pong (see PingContact/OnAddonMessage in Whispers.lua) -
+-- versioned in case the wire format ever needs to change without old and
+-- new SaveWhispers versions misreading each other's messages.
+SW.ADDON_MESSAGE_PREFIX = "SaveWhispers1"
 
 function SW:Print(message)
     if DEFAULT_CHAT_FRAME then
@@ -200,6 +204,15 @@ function SW:Initialize()
     end
     self:CreateMinimapButton()
     self:InstallSlashCommands()
+    -- Lets other SaveWhispers installs answer a presence ping (see
+    -- PingContact/OnAddonMessage in Whispers.lua) - unregistered prefixes
+    -- are silently dropped on receipt, so this has to happen before any
+    -- CHAT_MSG_ADDON we care about could arrive.
+    if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
+        C_ChatInfo.RegisterAddonMessagePrefix(SW.ADDON_MESSAGE_PREFIX)
+    elseif RegisterAddonMessagePrefix then
+        RegisterAddonMessagePrefix(SW.ADDON_MESSAGE_PREFIX)
+    end
     -- If already grouped when the addon loads (e.g. /reload mid-dungeon),
     -- GROUP_JOINED won't fire again, so start the session here instead.
     if self.DB.settings.enabled and IsInGroup and IsInGroup() then
@@ -239,6 +252,7 @@ eventFrame:RegisterEvent("CHAT_MSG_PARTY_LEADER")
 eventFrame:RegisterEvent("CHAT_MSG_RAID")
 eventFrame:RegisterEvent("CHAT_MSG_RAID_LEADER")
 eventFrame:RegisterEvent("CHAT_MSG_CHANNEL")
+eventFrame:RegisterEvent("CHAT_MSG_ADDON")
 eventFrame:RegisterEvent("GROUP_JOINED")
 eventFrame:RegisterEvent("GROUP_LEFT")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
@@ -267,6 +281,9 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         local text, player, _, channelName = ...
         local guid = select(12, ...)
         SW:StoreChannelMessage(channelName, player, text, guid)
+    elseif SW.initialized and SW.DB.settings.enabled and event == "CHAT_MSG_ADDON" then
+        local prefix, message, channel, sender = ...
+        SW:OnAddonMessage(prefix, message, channel, sender)
     elseif SW.initialized and SW.DB.settings.enabled and event == "GROUP_JOINED" then
         SW:StartGroupSession(IsInRaid and IsInRaid() and "raid" or "party")
     elseif SW.initialized and SW.DB.settings.enabled and event == "GROUP_LEFT" then

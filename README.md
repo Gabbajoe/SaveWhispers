@@ -1,4 +1,4 @@
-# SaveWhispers (SW) — V1.3
+# SaveWhispers (SW) — V1.4
 
 SaveWhispers is a persistent WhatsApp-style whisper inbox for WoW Classic. Incoming and outgoing whispers, plus Guild, Party, Raid and manually added channel chat, are stored locally until you remove the conversation. The window uses the game's own Blizzard dialog art, so it looks and feels like a native part of the UI.
 
@@ -18,8 +18,11 @@ Open it with `/sw` or the movable minimap button.
 - Guild Chat history, with your guild name shown as a subtitle.
 - Raid and Party Chat get their own history per session: a new conversation starts each time you join a group, with the member list captured at join time. If a party is promoted to a raid (or a raid drops to a party) mid-session, the existing conversation is relabeled in place — same history, no split — with a synthetic note marking when the switch happened.
 - Manually added World/other channel-chat histories, with a member popup for group and channel conversations - it sizes itself to the group, scrolls past 20 members, and each name is individually clickable to copy just that one.
-- Item and quest links in saved messages are clickable, show the real tooltip and are colored correctly — including quest references posted by the Questie addon, which aren't real hyperlinks but get recognized and converted.
-- Class-colored sender names, resolved from the message's sender GUID.
+- Item and quest links in saved messages are clickable, show the real tooltip and are colored correctly — including quest references posted by the Questie addon, which aren't real hyperlinks but get recognized and converted. Shift-clicking an item or quest links it straight into the message box, same as the default chat box.
+- Class-colored sender names, resolved from the message's sender GUID - right-click a name to copy it or invite them if they aren't already in your party/raid.
+- Right-click a conversation (in the list or the open chat's own name) for Watchlist/Pin/Copy Name/Export Chat/Delete, scoped to whichever actions make sense for that conversation's type.
+- Guild Chat and your currently active Party/Raid session can be replied to directly, not just read - older saved sessions stay read-only history.
+- Recognizes DM contacts who also have SaveWhispers installed (a lightweight presence ping) and uses that for a more accurate online status, shown with a small icon once confirmed.
 - A personal watchlist (star icon) for important players, plus pinning any conversation to the top of the list.
 - Conversations sort alphabetically by default, or by most recent activity if you turn that on in Settings — either way, Guild/Party/Raid/channel chat always stays above your DMs.
 - Filter pills (All / DMs / Guild / Group / Channels) above the conversation list to quickly narrow it down instead of scrolling through everything mixed together.
@@ -35,6 +38,14 @@ Open it with `/sw` or the movable minimap button.
 - Resizable, draggable window using the game's own Blizzard window art; behaves like a normal Blizzard frame (can be covered by other windows, click to bring to front, closes with Escape).
 
 ## Changelog
+
+### V1.4 (Developer: Gabbajoe)
+
+- Right-click a conversation (in the list or the open chat's name) for Watchlist/Pin/Copy Name/Export Chat/Delete, instead of a row of buttons above every chat - shows only the actions that make sense for that conversation's type.
+- Sender names in the chat log are clickable - right-click for Copy Name, and Invite when they aren't already in your party/raid.
+- Shift-clicking an item or quest now links it into the SaveWhispers message box, the same as the default chat box.
+- Guild Chat and your currently active Party/Raid session can be replied to directly from SaveWhispers, not just read - old saved sessions stay read-only.
+- SaveWhispers now recognizes DM contacts who also have it installed and uses that to show a more accurate online status, with a small icon next to their name once confirmed.
 
 ### V1.3 (Developer: Gabbajoe)
 

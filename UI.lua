@@ -1061,6 +1061,23 @@ function SW:BuildMessagesPanel()
     panel.statusDot:SetPoint("LEFT", panel.contact, "RIGHT", 6, 3)
     panel.statusText = text(panel.right, "(Offline)", "GameFontDisableSmall")
     panel.statusText:SetPoint("LEFT", panel.statusDot, "RIGHT", 4, 0)
+    -- Set once a PING/PONG exchange (see PingContact/OnAddonMessage in
+    -- Whispers.lua) confirms this contact also has SaveWhispers loaded -
+    -- separate from the online/busy/offline dot, which only reflects
+    -- whether they're currently reachable, not which addons they run.
+    panel.hasAddonIcon = panel.right:CreateTexture(nil, "OVERLAY")
+    panel.hasAddonIcon:SetSize(14, 14)
+    panel.hasAddonIcon:SetPoint("LEFT", panel.statusText, "RIGHT", 4, 0)
+    panel.hasAddonIcon:SetTexture(SW:BrandIconPath("icon"))
+    panel.hasAddonIcon:Hide()
+    local hasAddonHit = CreateFrame("Frame", nil, panel.right)
+    hasAddonHit:SetAllPoints(panel.hasAddonIcon)
+    hasAddonHit:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("This player also has SaveWhispers")
+        GameTooltip:Show()
+    end)
+    hasAddonHit:SetScript("OnLeave", function() GameTooltip:Hide() end)
     panel.members = fitButton(button(panel.right, "Members", 10, 24))
     panel.members:SetPoint("TOPRIGHT", panel.right, "TOPRIGHT", -12, -10)
     panel.members:SetScript("OnClick", function()
@@ -1625,7 +1642,7 @@ function SW:RenderGlobalSearchResults(panel, content)
     panel.contact:SetPoint("TOPLEFT", 16, -12)
     panel.contactFavoriteIcon:Hide()
     panel.contactRealm:Hide()
-    panel.statusDot:Hide(); panel.statusText:Hide()
+    panel.statusDot:Hide(); panel.statusText:Hide(); panel.hasAddonIcon:Hide()
     panel.members:Hide(); panel.contactMenu:Hide()
     panel.message:Hide(); panel.send:Hide()
     panel.chat:ClearAllPoints()
@@ -1712,6 +1729,9 @@ function SW:RefreshChatPanel()
         panel.lastSearchedKey = self.ui.selectedKey
         panel.chatSearchText = nil
         if panel.chatSearch then panel.chatSearch:SetText(panel.chatSearch.hint or "") end
+        -- See PingContact (Whispers.lua) - own cooldown, so opening the
+        -- same DM repeatedly doesn't spam a ping every time.
+        if conversation then self:PingContact(conversation) end
     end
     -- The rendered window grows by MAX_RENDERED_MESSAGES each time the user
     -- scrolls near the top (see the OnVerticalScroll hook in
@@ -1764,7 +1784,7 @@ function SW:RefreshChatPanel()
         panel.contact:SetPoint("TOPLEFT", 16, -12)
         panel.contactFavoriteIcon:Hide()
         panel.contactRealm:Hide()
-        panel.statusDot:Hide(); panel.statusText:Hide()
+        panel.statusDot:Hide(); panel.statusText:Hide(); panel.hasAddonIcon:Hide()
         panel.members:Hide(); panel.contactMenu:Hide()
         panel.message:Hide(); panel.send:Hide()
         panel.chatSearch:Hide(); panel.chatSearchAll:Hide(); panel.chatSearchAllLabel:Hide()
@@ -1802,7 +1822,7 @@ function SW:RefreshChatPanel()
     panel.contactMenu:SetPoint("BOTTOMRIGHT", panel.contact, "BOTTOMRIGHT", 4, -4)
     panel.contactMenu:Show()
     if conversation.system then
-        panel.statusDot:Hide(); panel.statusText:Hide()
+        panel.statusDot:Hide(); panel.statusText:Hide(); panel.hasAddonIcon:Hide()
         -- Guild Chat is the one system conversation that's a fixed, single
         -- entry rather than one of several (sessions, channels) - a
         -- members list here would just duplicate the default Guild Roster
@@ -1838,6 +1858,7 @@ function SW:RefreshChatPanel()
         elseif state == "busy" then panel.statusText:SetTextColor(0.95, 0.75, 0.18)
         else panel.statusText:SetTextColor(0.62, 0.62, 0.62) end
         panel.statusText:Show()
+        panel.hasAddonIcon:SetShown(conversation.hasAddon and true or false)
     end
     local width = math.max(340, panel.chat:GetWidth() - 5)
     local y = 0
@@ -3365,6 +3386,17 @@ function SW:RefreshSettingsPanel()
 end
 
 local CHANGELOG = {
+    {
+        version = "V1.4",
+        credit = "Developer: Gabbajoe",
+        entries = {
+            "Right-click a conversation (in the list or the open chat's name) for Watchlist/Pin/Copy Name/Export Chat/Delete, instead of a row of buttons above every chat - shows only the actions that make sense for that conversation's type.",
+            "Sender names in the chat log are clickable - right-click for Copy Name, and Invite when they aren't already in your party/raid.",
+            "Shift-clicking an item or quest now links it into the SaveWhispers message box, the same as the default chat box.",
+            "Guild Chat and your currently active Party/Raid session can be replied to directly from SaveWhispers, not just read - old saved sessions stay read-only.",
+            "SaveWhispers now recognizes DM contacts who also have it installed and uses that to show a more accurate online status, with a small icon next to their name once confirmed.",
+        },
+    },
     {
         version = "V1.3",
         credit = "Developer: Gabbajoe",
