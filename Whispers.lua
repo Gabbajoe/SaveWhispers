@@ -259,7 +259,11 @@ end
 function SW:EndGroupSession(kind)
     if not self.DB then return end
     local dbKey = kind == "raid" and "openRaidSessionKey" or "openPartySessionKey"
+    local hadSession = self.DB[dbKey] ~= nil
     self.DB[dbKey] = nil
+    -- The send row is shown only for the current Party/Raid session. Refresh
+    -- immediately when leaving so an old session becomes read-only at once.
+    if hadSession then self:NotifyDataChanged() end
 end
 
 -- A party converted to a raid (or back) is still the same group of people
@@ -466,10 +470,55 @@ function SW:GetContactStatus(player)
         end
     end
     local conversation = self:GetConversation(self:GetPlayerKey(player))
+    -- A PING/PONG exchange (see PingContact/OnAddonMessage below) only
+    -- ever succeeds while the other side is actually online and has
+    -- SaveWhispers loaded - a much stronger signal than lastSeen below for
+    -- someone who isn't a friend or in your group, so it's checked first.
+    if conversation and conversation.lastAddonSeen and self:Now() - conversation.lastAddonSeen < 900 then
+        return "online"
+    end
     if conversation and conversation.lastSeen and self:Now() - conversation.lastSeen < 900 then
         return "online"
     end
     return "offline"
+end
+
+local function sendAddonMessage(prefix, message, channel, target)
+    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+        C_ChatInfo.SendAddonMessage(prefix, message, channel, target)
+    elseif SendAddonMessage then
+        SendAddonMessage(prefix, message, channel, target)
+    end
+end
+
+-- Sent once per cooldown window when opening a DM - see OnAddonMessage
+-- below and the lastAddonSeen check in GetContactStatus above.
+local PING_COOLDOWN = 120
+function SW:PingContact(conversation)
+    if not conversation or conversation.system then return end
+    local now = self:Now()
+    if conversation.lastPingSent and now - conversation.lastPingSent < PING_COOLDOWN then return end
+    conversation.lastPingSent = now
+    sendAddonMessage(self.ADDON_MESSAGE_PREFIX, "PING", "WHISPER", conversation.name)
+end
+
+-- A PING can only ever reach us if the sender is online right now (same as
+-- any whisper), so answering it is itself proof they have the addon too -
+-- replying isn't conditional on already knowing them. hasAddon/
+-- lastAddonSeen are only recorded against an existing conversation, not
+-- created from a ping alone - a stranger with SaveWhispers pinging out of
+-- nowhere shouldn't add a DM you never actually started.
+function SW:OnAddonMessage(prefix, message, channel, sender)
+    if prefix ~= self.ADDON_MESSAGE_PREFIX or channel ~= "WHISPER" then return end
+    if message ~= "PING" and message ~= "PONG" then return end
+    local conversation = self:GetConversation(self:GetPlayerKey(sender))
+    if conversation then
+        conversation.hasAddon = true
+        conversation.lastAddonSeen = self:Now()
+    end
+    if message == "PING" then
+        sendAddonMessage(self.ADDON_MESSAGE_PREFIX, "PONG", "WHISPER", sender)
+    end
 end
 
 function SW:SendWhisper(player, text)
@@ -478,6 +527,53 @@ function SW:SendWhisper(player, text)
     if not player or not text then return false, "Select a player and enter a message." end
     if not SendChatMessage then return false, "Whispers are unavailable in this game client." end
     SendChatMessage(text, "WHISPER", nil, player)
+    return true
+end
+
+-- Guild Chat is one permanent conversation and may always receive a message
+-- from SaveWhispers. Party/Raid conversations are historical sessions, so
+-- only the session currently open in the database is allowed to send; this
+-- keeps an old log from accidentally sending into a new, unrelated group.
+function SW:CanSendToConversation(conversation)
+    if not conversation then return false end
+    if not conversation.system then return true end
+    if conversation.channel == "guild" then return true end
+    if conversation.channel == "party" then
+        return self.DB and self.DB.openPartySessionKey == conversation.key
+            and IsInGroup and IsInGroup()
+            and not (IsInRaid and IsInRaid())
+    elseif conversation.channel == "raid" then
+        return self.DB and self.DB.openRaidSessionKey == conversation.key
+            and IsInRaid and IsInRaid()
+    end
+    return false
+end
+
+function SW:SendConversationMessage(conversation, text)
+    if not conversation then return false, "Select a conversation first." end
+    if not conversation.system then return self:SendWhisper(conversation.name, text) end
+
+    text = messageText(text)
+    if not text then return false, "Enter a message first." end
+    if not SendChatMessage then return false, "Chat is unavailable in this game client." end
+
+    local chatType
+    if conversation.channel == "guild" then
+        if GetGuildInfo and not GetGuildInfo("player") then
+            return false, "You are not in a guild."
+        end
+        chatType = "GUILD"
+    elseif conversation.channel == "party" and self:CanSendToConversation(conversation) then
+        chatType = "PARTY"
+    elseif conversation.channel == "raid" and self:CanSendToConversation(conversation) then
+        chatType = "RAID"
+    else
+        return false, "Only the current Party/Raid session can send messages."
+    end
+
+    -- Do not add the outgoing message here: the normal CHAT_MSG_* echo is
+    -- what records it, just like a message sent through Blizzard's chat box.
+    SendChatMessage(text, chatType)
     return true
 end
 

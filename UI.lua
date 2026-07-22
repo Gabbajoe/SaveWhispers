@@ -587,25 +587,6 @@ local function normalizeTopLeft(frame)
     return x, y
 end
 
--- Lays widgets out right-to-left along a row, skipping hidden ones, so a
--- header button row with a variable set of visible buttons (icon buttons,
--- text buttons with changing labels) stays evenly spaced instead of using
--- independent fixed offsets that drift apart once widths change.
-local function flowRight(anchor, xOffset, yOffset, gap, widgets)
-    local previous
-    for _, widget in ipairs(widgets) do
-        if widget:IsShown() then
-            widget:ClearAllPoints()
-            if previous then
-                widget:SetPoint("RIGHT", previous, "LEFT", -gap, 0)
-            else
-                widget:SetPoint("TOPRIGHT", anchor, "TOPRIGHT", xOffset, yOffset)
-            end
-            previous = widget
-        end
-    end
-end
-
 -- Reusable frame pool: refresh loops reuse existing rows instead of creating
 -- new ones every call, which previously leaked frames on every chat event
 -- (list rebuild ran on every incoming whisper/guild/party message) and
@@ -1062,6 +1043,17 @@ function SW:BuildMessagesPanel()
     panel.contactFavoriteIcon:Hide()
     panel.contact = text(panel.right, "Select a conversation", "GameFontNormalLarge")
     panel.contact:SetPoint("TOPLEFT", 16, -12)
+    -- Right-click the contact name for Watchlist/Pin/Copy Name/Export/
+    -- Delete instead of a row of buttons above the chat (see
+    -- ShowContextMenu/ContextMenuItemsFor) - repositioned to cover
+    -- panel.contact's current bounds every refresh, since its width
+    -- changes with the name.
+    panel.contactMenu = CreateFrame("Button", nil, panel.right)
+    panel.contactMenu:RegisterForClicks("RightButtonUp")
+    panel.contactMenu:SetScript("OnClick", function()
+        local conversation = SW:GetConversation(SW.ui.selectedKey)
+        if conversation then SW:ShowContextMenu(SW:ContextMenuItemsFor(conversation), panel.contactMenu) end
+    end)
     panel.contactRealm = text(panel.right, "", "GameFontDisableSmall")
     panel.contactRealm:SetPoint("TOPLEFT", panel.contact, "BOTTOMLEFT", 1, -3)
     panel.statusDot = panel.right:CreateTexture(nil, "OVERLAY")
@@ -1069,47 +1061,34 @@ function SW:BuildMessagesPanel()
     panel.statusDot:SetPoint("LEFT", panel.contact, "RIGHT", 6, 3)
     panel.statusText = text(panel.right, "(Offline)", "GameFontDisableSmall")
     panel.statusText:SetPoint("LEFT", panel.statusDot, "RIGHT", 4, 0)
-    -- Positioned via flowRight() in RefreshChatPanel instead of fixed offsets,
-    -- since which buttons are visible (and Delete DM's label) changes.
-    panel.copyName = fitButton(button(panel.right, "Copy Name", 10, 22))
-    panel.copyName:SetScript("OnClick", function()
-        local conversation = SW:GetConversation(SW.ui.selectedKey)
-        if conversation then SW:ShowCopyPopup("Copy Name", conversation.name) end
+    -- Set once a PING/PONG exchange (see PingContact/OnAddonMessage in
+    -- Whispers.lua) confirms this contact also has SaveWhispers loaded -
+    -- separate from the online/busy/offline dot, which only reflects
+    -- whether they're currently reachable, not which addons they run.
+    panel.hasAddonIcon = panel.right:CreateTexture(nil, "OVERLAY")
+    panel.hasAddonIcon:SetSize(14, 14)
+    panel.hasAddonIcon:SetPoint("LEFT", panel.statusText, "RIGHT", 4, 0)
+    panel.hasAddonIcon:SetTexture(SW:BrandIconPath("icon"))
+    panel.hasAddonIcon:Hide()
+    local hasAddonHit = CreateFrame("Frame", nil, panel.right)
+    hasAddonHit:SetAllPoints(panel.hasAddonIcon)
+    hasAddonHit:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("This player also has SaveWhispers")
+        GameTooltip:Show()
     end)
-    panel.exportChat = fitButton(button(panel.right, "Export Chat", 10, 22))
-    panel.exportChat:SetScript("OnClick", function()
-        local conversation = SW:GetConversation(SW.ui.selectedKey)
-        if not conversation then return end
-        local lines = {}
-        for _, message in ipairs(conversation.messages or {}) do
-            local speaker = message.outgoing and "You" or (message.sender or conversation.name)
-            lines[#lines + 1] = "[" .. date("%Y-%m-%d %H:%M:%S", message.timestamp or 0) .. "] " .. speaker .. ": " .. plainText(message.text)
-        end
-        SW:ShowCopyPopup("Export - " .. conversation.name, table.concat(lines, "\n"))
-    end)
-    panel.star = iconButton(panel.right, "Interface\\TargetingFrame\\UI-RaidTargetingIcon_1", "Toggle watchlist favorite")
-    panel.star:SetScript("OnClick", function() if SW.ui.selectedKey then SW:ToggleFavorite(SW.ui.selectedKey) end end)
-    panel.pin = iconButton(panel.right, "Interface\\TargetingFrame\\UI-RaidTargetingIcon_3", "Pin to top of list")
-    panel.pin:SetScript("OnClick", function()
-        if SW.ui.selectedKey then
-            local ok, err = SW:TogglePinned(SW.ui.selectedKey)
-            if not ok then SW:Print(err) end
-        end
-    end)
+    hasAddonHit:SetScript("OnLeave", function() GameTooltip:Hide() end)
     panel.members = fitButton(button(panel.right, "Members", 10, 24))
+    panel.members:SetPoint("TOPRIGHT", panel.right, "TOPRIGHT", -12, -10)
     panel.members:SetScript("OnClick", function()
         local conversation = SW:GetConversation(SW.ui.selectedKey)
         if conversation then SW:ShowMembers(conversation) end
     end)
-    panel.delete = button(panel.right, "Delete DM", 10, 24)
-    panel.delete:SetScript("OnClick", function() if SW.ui.selectedKey then SW:DeleteConversation(SW.ui.selectedKey) end end)
-    -- Own row below the two button rows (Delete/Members/Pin/Star, then
-    -- Export/Copy) - RefreshChatPanel pushes the chat scroll area down to
-    -- make room, same reasoning as why Copy/Export got their own row
-    -- earlier this session (six buttons crammed on one row ran into the
-    -- contact name).
-    panel.chatSearch = edit(panel.right, 200, 22, "Search this chat...")
-    panel.chatSearch:SetPoint("TOPRIGHT", panel.right, "TOPRIGHT", -12, -66)
+    -- One row below Members (whether or not Members is actually shown for
+    -- this conversation type) instead of stacking behind two rows of
+    -- buttons that no longer exist.
+    panel.chatSearch = edit(panel.right, 220, 22, "Search this chat...")
+    panel.chatSearch:SetPoint("TOPRIGHT", panel.right, "TOPRIGHT", -12, -40)
     -- userInput only: programmatic SetText (clearing the box on Jump or
     -- on conversation switch) also fires OnTextChanged - reacting to that
     -- re-entered RefreshChatPanel mid-render, and the outer pass then
@@ -1134,10 +1113,44 @@ function SW:BuildMessagesPanel()
     panel.message:SetPoint("BOTTOMRIGHT", -96, 12)
     panel.send = button(panel.right, "Send", 72, 24)
     panel.send:SetPoint("BOTTOMRIGHT", -14, 12)
-    panel.chat:SetPoint("TOPLEFT", 16, -92)
-    panel.chat:SetPoint("TOPRIGHT", -32, -92)
+    panel.chat:SetPoint("TOPLEFT", 16, -66)
+    panel.chat:SetPoint("TOPRIGHT", -32, -66)
     -- Bottom anchor is redone per-refresh in RefreshChatPanel, since it
-    -- depends on whether the message/send row is shown (real DMs only).
+    -- depends on whether the message row is currently sendable.
+
+    -- Shift-clicking an item/spell/quest links it into whichever chat edit
+    -- box the game considers "active" - that's normally only the default
+    -- ChatFrame boxes, since ChatEdit_InsertLink is what Shift-click
+    -- actually calls. Hooking it (not overwriting - falls through to the
+    -- original for every other edit box) is the standard way a custom
+    -- EditBox opts into that, same technique WeakAuras/most addons with
+    -- their own text inputs use.
+    if not SW.originalChatEditInsertLink then
+        SW.originalChatEditInsertLink = ChatEdit_InsertLink
+        ChatEdit_InsertLink = function(text)
+            if panel.message:IsVisible() and panel.message:HasFocus() then
+                panel.message:Insert(text)
+                return true
+            end
+            return SW.originalChatEditInsertLink(text)
+        end
+    end
+    -- Items shift-click straight into ChatEdit_InsertLink, but the Quest
+    -- Tracker checks ChatEdit_GetActiveWindow() first to decide whether any
+    -- chat box is "active" at all before it bothers linking - since that
+    -- only knows about the default ChatFrame boxes, it saw none focused and
+    -- fell back to its other Shift-click behavior (untracking the quest)
+    -- instead of ever calling ChatEdit_InsertLink. Hooking this one too so
+    -- it reports our EditBox as active while it's focused fixes that.
+    if not SW.originalChatEditGetActiveWindow then
+        SW.originalChatEditGetActiveWindow = ChatEdit_GetActiveWindow
+        ChatEdit_GetActiveWindow = function()
+            if panel.message:IsVisible() and panel.message:HasFocus() then
+                return panel.message
+            end
+            return SW.originalChatEditGetActiveWindow()
+        end
+    end
 
     -- Floating pill, shown only while scrolled up and unseen messages have
     -- arrived below (see RefreshChatPanel) - click jumps to the bottom.
@@ -1180,7 +1193,7 @@ function SW:BuildMessagesPanel()
     local function send()
         local conversation = SW:GetConversation(SW.ui.selectedKey)
         if not conversation then SW:Print("Select a conversation first."); return end
-        local ok, err = SW:SendWhisper(conversation.name, fieldValue(panel.message))
+        local ok, err = SW:SendConversationMessage(conversation, fieldValue(panel.message))
         if ok then
             panel.message:SetText("")
             panel.message:SetFocus()
@@ -1198,6 +1211,7 @@ local ROW_HEIGHT = 22
 -- share a single row instead of a 3-line card with a message preview.
 local function createConversationRow(parent)
     local row = CreateFrame("Button", nil, parent)
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     -- The gold quest-log gradient (hover AND selection) belongs to the
     -- parchment look - on the flat themes it clashed with their own
     -- palettes, so those get flat fills in the theme's accent color
@@ -1362,7 +1376,11 @@ function SW:RefreshMessagesPanel()
         else
             row.unread:Hide()
         end
-        row:SetScript("OnClick", function()
+        row:SetScript("OnClick", function(self, mouseButton)
+            if mouseButton == "RightButton" then
+                SW:ShowContextMenu(SW:ContextMenuItemsFor(conversation), self)
+                return
+            end
             if SW.ui.selectMode then
                 SW.ui.selectedDMs = SW.ui.selectedDMs or {}
                 SW.ui.selectedDMs[conversation.key] = not SW.ui.selectedDMs[conversation.key] or nil
@@ -1397,8 +1415,18 @@ local function createChatLine(parent)
     line.text:SetPoint("TOPLEFT", 0, 0)
     line.text:SetJustifyV("TOP")
     if line.text.SetWordWrap then line.text:SetWordWrap(true) end
+    -- A sender name is tokenized as a "player:Name" link (see the speaker
+    -- construction in RefreshChatPanel) purely to reuse this widget/pool -
+    -- it's not a real WoW hyperlink, so it's handled entirely by hand
+    -- instead of being routed through Blizzard's own hyperlink API:
+    -- GameTooltip:SetHyperlink doesn't recognize "player:" links on
+    -- Classic Era ("Unknown link type" spam), and worse, SetItemRef's own
+    -- native right-click menu LOOKS like it works but silently fails on
+    -- "Copy Character Name" - CopyToClipboard is a protected function, and
+    -- the click chain is tainted by having passed through an addon-created
+    -- button, so Blizzard's own secure code refuses the call too.
     line:SetScript("OnEnter", function(self)
-        if self.link then
+        if self.link and not string.match(self.link, "^player:") then
             GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
             GameTooltip:SetHyperlink(self.link)
             GameTooltip:Show()
@@ -1406,7 +1434,13 @@ local function createChatLine(parent)
     end)
     line:SetScript("OnLeave", function() GameTooltip:Hide() end)
     line:SetScript("OnClick", function(self, mouseButton)
-        if self.link and SetItemRef then SetItemRef(self.link, "", mouseButton, self) end
+        if not self.link then return end
+        local playerName = string.match(self.link, "^player:(.+)$")
+        if playerName then
+            if mouseButton == "RightButton" then SW:ShowNameContextMenu(playerName, self) end
+            return
+        end
+        if SetItemRef then SetItemRef(self.link, "", mouseButton, self) end
     end)
     return line
 end
@@ -1608,13 +1642,12 @@ function SW:RenderGlobalSearchResults(panel, content)
     panel.contact:SetPoint("TOPLEFT", 16, -12)
     panel.contactFavoriteIcon:Hide()
     panel.contactRealm:Hide()
-    panel.statusDot:Hide(); panel.statusText:Hide()
-    panel.star:Hide(); panel.pin:Hide(); panel.members:Hide(); panel.delete:Hide()
-    panel.copyName:Hide(); panel.exportChat:Hide()
+    panel.statusDot:Hide(); panel.statusText:Hide(); panel.hasAddonIcon:Hide()
+    panel.members:Hide(); panel.contactMenu:Hide()
     panel.message:Hide(); panel.send:Hide()
     panel.chat:ClearAllPoints()
-    panel.chat:SetPoint("TOPLEFT", 16, -92)
-    panel.chat:SetPoint("TOPRIGHT", -32, -92)
+    panel.chat:SetPoint("TOPLEFT", 16, -66)
+    panel.chat:SetPoint("TOPRIGHT", -32, -66)
     panel.chat:SetPoint("BOTTOMLEFT", panel.right, "BOTTOMLEFT", 16, 12)
     panel.chat:SetPoint("BOTTOMRIGHT", panel.right, "BOTTOMRIGHT", -32, 12)
     local results = self:SearchAllMessages(panel.chatSearchText)
@@ -1696,6 +1729,9 @@ function SW:RefreshChatPanel()
         panel.lastSearchedKey = self.ui.selectedKey
         panel.chatSearchText = nil
         if panel.chatSearch then panel.chatSearch:SetText(panel.chatSearch.hint or "") end
+        -- See PingContact (Whispers.lua) - own cooldown, so opening the
+        -- same DM repeatedly doesn't spam a ping every time.
+        if conversation then self:PingContact(conversation) end
     end
     -- The rendered window grows by MAX_RENDERED_MESSAGES each time the user
     -- scrolls near the top (see the OnVerticalScroll hook in
@@ -1748,14 +1784,13 @@ function SW:RefreshChatPanel()
         panel.contact:SetPoint("TOPLEFT", 16, -12)
         panel.contactFavoriteIcon:Hide()
         panel.contactRealm:Hide()
-        panel.statusDot:Hide(); panel.statusText:Hide()
-        panel.star:Hide(); panel.pin:Hide(); panel.members:Hide(); panel.delete:Hide()
-        panel.copyName:Hide(); panel.exportChat:Hide()
+        panel.statusDot:Hide(); panel.statusText:Hide(); panel.hasAddonIcon:Hide()
+        panel.members:Hide(); panel.contactMenu:Hide()
         panel.message:Hide(); panel.send:Hide()
         panel.chatSearch:Hide(); panel.chatSearchAll:Hide(); panel.chatSearchAllLabel:Hide()
         panel.chat:ClearAllPoints()
-        panel.chat:SetPoint("TOPLEFT", 16, -92)
-        panel.chat:SetPoint("TOPRIGHT", -32, -92)
+        panel.chat:SetPoint("TOPLEFT", 16, -66)
+        panel.chat:SetPoint("TOPRIGHT", -32, -66)
         panel.chat:SetPoint("BOTTOMLEFT", panel.right, "BOTTOMLEFT", 16, 12)
         panel.chat:SetPoint("BOTTOMRIGHT", panel.right, "BOTTOMRIGHT", -32, 12)
         poolFinish(content)
@@ -1779,45 +1814,36 @@ function SW:RefreshChatPanel()
     end
     panel.contactRealm:SetText(realm and ("(" .. realm .. ")") or "")
     panel.contactRealm:SetShown(realm ~= nil)
-    -- "Copy Name" doesn't make sense for the shared Guild/Party/Raid/channel
-    -- conversations, only for a real player DM.
-    panel.copyName:SetShown(not conversation.system)
-    panel.exportChat:Show()
+    -- Right-click hit-region over the contact name for the Watchlist/Pin/
+    -- Copy Name/Export/Delete context menu - repositioned every refresh
+    -- since the name's width changes.
+    panel.contactMenu:ClearAllPoints()
+    panel.contactMenu:SetPoint("TOPLEFT", panel.contact, "TOPLEFT", -4, 4)
+    panel.contactMenu:SetPoint("BOTTOMRIGHT", panel.contact, "BOTTOMRIGHT", 4, -4)
+    panel.contactMenu:Show()
     if conversation.system then
-        panel.star:Hide(); panel.statusDot:Hide(); panel.statusText:Hide()
+        panel.statusDot:Hide(); panel.statusText:Hide(); panel.hasAddonIcon:Hide()
         -- Guild Chat is the one system conversation that's a fixed, single
-        -- entry rather than one of several (sessions, channels) - pinning
-        -- it to the top does nothing since it's always sorted first anyway,
-        -- and a members list here would just duplicate the default Guild
-        -- Roster window.
-        if conversation.channel == "guild" then
-            panel.pin:Hide(); panel.members:Hide()
-        else
-            panel.pin:Show(); panel.members:Show()
-        end
-        if conversation.channel == "channel" then
-            panel.delete:SetText("Remove")
-            panel.delete:Show()
-        elseif conversation.channel == "party" or conversation.channel == "raid" then
-            panel.delete:SetText("Delete Session")
-            panel.delete:Show()
-        else
-            panel.delete:Hide()
-        end
-        -- Guild/Party/Raid/channel chat is read-only in this addon (it
-        -- only ever mirrors what the real chat frame sends) - the input
-        -- row doesn't apply, so hide it instead of just disabling it.
-        panel.message:Hide(); panel.send:Hide()
+        -- entry rather than one of several (sessions, channels) - a
+        -- members list here would just duplicate the default Guild Roster
+        -- window.
+        panel.members:SetShown(conversation.channel ~= "guild")
+        -- Guild Chat can always be used here. Party/Raid sessions get the
+        -- same chat row only while they are the active group; old saved
+        -- sessions and manually added channels intentionally stay read-only.
+        local canSend = self:CanSendToConversation(conversation)
+        panel.message:SetShown(canSend); panel.send:SetShown(canSend)
+        if canSend then panel.message:Enable(); panel.send:Enable() else panel.message:ClearFocus() end
         panel.chat:ClearAllPoints()
-        panel.chat:SetPoint("TOPLEFT", 16, -92)
-        panel.chat:SetPoint("TOPRIGHT", -32, -92)
-        panel.chat:SetPoint("BOTTOMLEFT", panel.right, "BOTTOMLEFT", 16, 12)
-        panel.chat:SetPoint("BOTTOMRIGHT", panel.right, "BOTTOMRIGHT", -32, 12)
+        panel.chat:SetPoint("TOPLEFT", 16, -66)
+        panel.chat:SetPoint("TOPRIGHT", -32, -66)
+        panel.chat:SetPoint("BOTTOMLEFT", panel.right, "BOTTOMLEFT", 16, canSend and 44 or 12)
+        panel.chat:SetPoint("BOTTOMRIGHT", panel.right, "BOTTOMRIGHT", -32, canSend and 44 or 12)
     else
-        panel.star:Show(); panel.members:Hide(); panel.pin:Show(); panel.delete:Show(); panel.delete:SetText("Delete DM"); panel.message:Show(); panel.send:Show(); panel.message:Enable(); panel.send:Enable()
+        panel.members:Hide(); panel.message:Show(); panel.send:Show(); panel.message:Enable(); panel.send:Enable()
         panel.chat:ClearAllPoints()
-        panel.chat:SetPoint("TOPLEFT", 16, -92)
-        panel.chat:SetPoint("TOPRIGHT", -32, -92)
+        panel.chat:SetPoint("TOPLEFT", 16, -66)
+        panel.chat:SetPoint("TOPRIGHT", -32, -66)
         panel.chat:SetPoint("BOTTOMLEFT", panel.right, "BOTTOMLEFT", 16, 44)
         panel.chat:SetPoint("BOTTOMRIGHT", panel.right, "BOTTOMRIGHT", -32, 44)
         local state = self:GetContactStatus(conversation.name)
@@ -1832,27 +1858,8 @@ function SW:RefreshChatPanel()
         elseif state == "busy" then panel.statusText:SetTextColor(0.95, 0.75, 0.18)
         else panel.statusText:SetTextColor(0.62, 0.62, 0.62) end
         panel.statusText:Show()
-        if conversation.favorite then panel.star:LockHighlight() else panel.star:UnlockHighlight() end
+        panel.hasAddonIcon:SetShown(conversation.hasAddon and true or false)
     end
-    if conversation.pinned then panel.pin:LockHighlight() else panel.pin:UnlockHighlight() end
-    fitButton(panel.delete)
-    fitButton(panel.exportChat)
-    fitButton(panel.copyName)
-    -- The three stacked rows (Delete row, Copy/Export row, search row) are
-    -- all right-aligned but had ragged left edges - give the rightmost
-    -- column one shared width (Delete/Export) and stretch the search box
-    -- so its left edge lines up with Copy Name's.
-    local rightColumn = math.max(panel.delete:IsShown() and panel.delete:GetWidth() or 0, panel.exportChat:GetWidth())
-    if panel.delete:IsShown() then panel.delete:SetWidth(rightColumn) end
-    panel.exportChat:SetWidth(rightColumn)
-    -- Copy/Export live on their own row below Pin/Star/Delete DM instead of
-    -- sharing the top row - with 6 buttons crammed against the right edge
-    -- the row got long enough to run into the contact name on the left.
-    flowRight(panel.right, -12, -10, 6, { panel.delete, panel.members, panel.pin, panel.star })
-    flowRight(panel.right, -12, -38, 6, { panel.exportChat, panel.copyName })
-    local searchWidth = rightColumn
-    if panel.copyName:IsShown() then searchWidth = rightColumn + 6 + panel.copyName:GetWidth() end
-    panel.chatSearch:SetWidth(math.max(170, searchWidth))
     local width = math.max(340, panel.chat:GetWidth() - 5)
     local y = 0
     if conversation.members and #conversation.members > 0 then
@@ -1993,23 +2000,35 @@ function SW:RefreshChatPanel()
                 SW:RefreshUI()
             end)
             local r, g, b = chatColor(message.outgoing)
-            local speaker, nameColor
+            local speaker, nameColor, linkName
             if message.outgoing then
                 speaker = "You"
+                linkName = UnitName and UnitName("player") or nil
                 if UnitClass then
                     local _, englishClass = UnitClass("player")
                     local color = englishClass and RAID_CLASS_COLORS and RAID_CLASS_COLORS[englishClass]
                     if color then nameColor = string.format("%02x%02x%02x", color.r * 255, color.g * 255, color.b * 255) end
                 end
             else
-                speaker = splitRealm(message.sender or conversation.name)
+                linkName = message.sender or conversation.name
+                speaker = splitRealm(linkName)
                 nameColor = classColorHex(message.guid)
             end
             -- Class color when known; otherwise fall back to the
             -- configurable chat color from Settings instead of leaving the
             -- name uncolored.
             if not nameColor then nameColor = string.format("%02x%02x%02x", r * 255, g * 255, b * 255) end
-            local speakerText = "|cff" .. nameColor .. speaker .. "|r"
+            -- A real |Hplayer:...|h link, not plain colored text - lets a
+            -- right-click open WoW's own player dropdown (Whisper/Invite/
+            -- Copy Character Name, automatically enabled or greyed out
+            -- based on current group membership) via the same SetItemRef
+            -- path item/quest links already use below, instead of building
+            -- a separate menu for it. The colon lives inside the link's
+            -- display text (not appended after) so it stays part of the
+            -- same clickable token rather than becoming its own stray word.
+            local speakerText = linkName
+                and ("|cff" .. nameColor .. "|Hplayer:" .. linkName .. "|h" .. speaker .. ":|h|r")
+                or ("|cff" .. nameColor .. speaker .. ":|r")
             local timeColor = message.bookmarked and "ffe066" or "808080"
             local timePrefix = "|cff" .. timeColor .. "[" .. date("%H:%M:%S", message.timestamp or 0) .. "]|r "
             -- SetItemRef/GameTooltip:SetHyperlink both want just the inner
@@ -2017,7 +2036,7 @@ function SW:RefreshChatPanel()
             -- it. Passing the raw wrapped form is why quest links didn't
             -- open the quest tooltip even though item links mostly worked.
             local processedText = replaceIconExpressions(colorizeQuestLinks(synthesizeQuestieLinks(message.text)))
-            local fullText = timePrefix .. speakerText .. ": " .. processedText
+            local fullText = timePrefix .. speakerText .. " " .. processedText
             -- A message can contain several item/quest links. One
             -- FontString/Button per whole line only ever exposed the FIRST
             -- link it found, so hovering anywhere reacted to that one link
@@ -2159,6 +2178,191 @@ function SW:RefreshChatPanel()
     panel.chatLoadingMore = nil
     panel.lastRenderKey = self.ui.selectedKey
     panel.lastRenderCount = #(conversation.messages or {})
+end
+
+-- Watchlist/Pin/Delete/Copy Name/Export Chat used to be a row of buttons
+-- above every open chat - built here as a small themed popup instead of
+-- Blizzard's UIDropDownMenu template, which (like the checkboxes/scrollbar
+-- arrows reworked earlier this session) is awkward to reskin across the
+-- three flat themes. Reused for both the conversation-list row right-click
+-- and the open chat's contact-name right-click.
+function SW:ShowContextMenu(items, anchorFrame)
+    if not self.ui.contextMenu then
+        -- Spans the whole screen, one strata below the menu itself, so any
+        -- click outside the menu's own rows closes it - the menu frame
+        -- (mouse-enabled, on top) swallows clicks landing on itself first.
+        local catcher = CreateFrame("Button", nil, UIParent)
+        catcher:SetAllPoints(UIParent)
+        catcher:SetFrameStrata("FULLSCREEN_DIALOG")
+        catcher:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        catcher:Hide()
+        local menu = CreateFrame("Frame", nil, UIParent, BACKDROP)
+        menu:SetFrameStrata("FULLSCREEN_DIALOG")
+        menu:SetClampedToScreen(true)
+        -- A plain flat box, not full button widgets per row (that looked
+        -- like a stack of separate buttons rather than one menu) - same
+        -- style as the player-name suggestion dropdown in edit() above,
+        -- which has the same "small popup list" shape.
+        menu:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+        menu:SetBackdropColor(0, 0, 0, 0.95)
+        menu:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+        menu:Hide()
+        catcher:SetScript("OnClick", function() menu:Hide(); catcher:Hide() end)
+        menu.catcher = catcher
+        menu.rows = {}
+        self.ui.contextMenu = menu
+    end
+    local menu = self.ui.contextMenu
+    local rowHeight, padding = 20, 4
+    local width = 60
+    -- Measured up front so every row shares one width instead of each
+    -- being sized to its own label.
+    for _, item in ipairs(items) do
+        local probe = text(menu, item.label, "GameFontHighlightSmall")
+        width = math.max(width, probe:GetStringWidth() + 20)
+        probe:Hide()
+    end
+    for i, item in ipairs(items) do
+        local row = menu.rows[i]
+        if not row then
+            row = CreateFrame("Button", nil, menu)
+            -- Same theme-aware hover treatment as the conversation list
+            -- rows and the suggestion dropdown - gold gradient only on the
+            -- classic theme, a flat accent tint on the others.
+            local rowTheme = currentTheme()
+            if rowTheme.useNativeWidgets then
+                row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+            else
+                local a = rowTheme.accentColor
+                row:SetHighlightTexture("Interface\\Buttons\\WHITE8X8")
+                local hover = row:GetHighlightTexture()
+                if hover then hover:SetVertexColor(a[1], a[2], a[3], 0.14) end
+            end
+            row.label = text(row, "", "GameFontHighlightSmall")
+            row.label:SetPoint("LEFT", 8, 0)
+            menu.rows[i] = row
+        end
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", padding, -padding - (i - 1) * rowHeight)
+        row:SetPoint("TOPRIGHT", -padding, -padding - (i - 1) * rowHeight)
+        row:SetHeight(rowHeight)
+        row.label:SetText(item.label)
+        row:SetScript("OnClick", function()
+            menu:Hide()
+            menu.catcher:Hide()
+            item.onClick()
+        end)
+        row:Show()
+    end
+    for i = #items + 1, #menu.rows do
+        menu.rows[i]:Hide()
+    end
+    menu:SetSize(width + padding * 2, padding * 2 + #items * rowHeight)
+    menu:ClearAllPoints()
+    menu:SetPoint("TOPLEFT", anchorFrame, "BOTTOMLEFT", 0, -2)
+    menu.catcher:Show()
+    menu:Show()
+end
+
+-- Whether name (a "Name" or "Name-Realm" string) is already in the
+-- player's current party/raid - checked against the live roster (party1..N/
+-- raid1..N) rather than UnitInParty/UnitInRaid, which want a unit token
+-- and don't reliably resolve from a bare name string.
+local function isInMyGroup(name)
+    local base = string.match(name, "^([^%-]+)") or name
+    if IsInRaid and IsInRaid() then
+        for i = 1, (GetNumGroupMembers and GetNumGroupMembers() or 0) do
+            if UnitName("raid" .. i) == base then return true end
+        end
+    elseif IsInGroup and IsInGroup() then
+        for i = 1, (GetNumGroupMembers and GetNumGroupMembers() or 1) - 1 do
+            if UnitName("party" .. i) == base then return true end
+        end
+    end
+    return false
+end
+
+-- Invite is only offered for someone who isn't already grouped with you.
+-- Raid rosters include yourself as one of the numbered units (party
+-- rosters don't), so isInMyGroup(ownName) only reliably catches "that's
+-- me" while in a raid - check the name directly too so a party doesn't
+-- offer to invite yourself.
+local function canInvite(name)
+    local ownName = UnitName and UnitName("player")
+    local isSelf = ownName and string.match(name, "^([^%-]+)") == ownName
+    return not isSelf and not isInMyGroup(name)
+end
+
+local function inviteItem(name)
+    return {
+        label = "Invite",
+        onClick = function()
+            if InviteUnit then InviteUnit(name)
+            elseif C_PartyInfo and C_PartyInfo.InviteUnit then C_PartyInfo.InviteUnit(name) end
+        end,
+    }
+end
+
+-- The subset of actions that make sense for this conversation's type -
+-- Guild Chat is always a single fixed conversation (no Watchlist/Pin/
+-- Delete), Party/Raid/Channel are sessions you can delete but not pin or
+-- rename, and only a real DM has a player name worth copying, starring, or
+-- inviting.
+function SW:ContextMenuItemsFor(conversation)
+    local items = {}
+    if not conversation.system then
+        items[#items + 1] = {
+            label = conversation.favorite and "Remove from Watchlist" or "Add to Watchlist",
+            onClick = function() SW:ToggleFavorite(conversation.key) end,
+        }
+        items[#items + 1] = {
+            label = conversation.pinned and "Unpin" or "Pin to Top",
+            onClick = function()
+                local ok, err = SW:TogglePinned(conversation.key)
+                if not ok then SW:Print(err) end
+            end,
+        }
+        items[#items + 1] = {
+            label = "Copy Name",
+            onClick = function() SW:ShowCopyPopup("Copy Name", conversation.name) end,
+        }
+        if canInvite(conversation.name) then
+            items[#items + 1] = inviteItem(conversation.name)
+        end
+    end
+    items[#items + 1] = {
+        label = "Export Chat",
+        onClick = function()
+            local lines = {}
+            for _, message in ipairs(conversation.messages or {}) do
+                local speaker = message.outgoing and "You" or (message.sender or conversation.name)
+                lines[#lines + 1] = "[" .. date("%Y-%m-%d %H:%M:%S", message.timestamp or 0) .. "] " .. speaker .. ": " .. plainText(message.text)
+            end
+            SW:ShowCopyPopup("Export - " .. conversation.name, table.concat(lines, "\n"))
+        end,
+    }
+    if not conversation.system then
+        items[#items + 1] = { label = "Delete DM", onClick = function() SW:DeleteConversation(conversation.key) end }
+    elseif conversation.channel == "channel" then
+        items[#items + 1] = { label = "Remove", onClick = function() SW:DeleteConversation(conversation.key) end }
+    elseif conversation.channel == "party" or conversation.channel == "raid" then
+        items[#items + 1] = { label = "Delete Session", onClick = function() SW:DeleteConversation(conversation.key) end }
+    end
+    return items
+end
+
+-- Right-click on a sender name in the chat log (see createChatLine) - a
+-- lighter menu than ContextMenuItemsFor since a name isn't a conversation:
+-- just Copy Name (same ShowCopyPopup every other Copy Name/Export Chat
+-- action already uses - CopyToClipboard is a protected function addons
+-- can't call, confirmed by testing, not just a theoretical restriction)
+-- and Invite, shown only when they aren't already in the group.
+function SW:ShowNameContextMenu(name, anchorFrame)
+    local items = {
+        { label = "Copy Name", onClick = function() SW:ShowCopyPopup("Copy Name", name) end },
+    }
+    if canInvite(name) then items[#items + 1] = inviteItem(name) end
+    self:ShowContextMenu(items, anchorFrame)
 end
 
 -- WoW addons can't touch the OS clipboard directly. The standard workaround
@@ -3182,6 +3386,17 @@ function SW:RefreshSettingsPanel()
 end
 
 local CHANGELOG = {
+    {
+        version = "V1.4",
+        credit = "Developer: Gabbajoe",
+        entries = {
+            "Right-click a conversation (in the list or the open chat's name) for Watchlist/Pin/Copy Name/Export Chat/Delete, instead of a row of buttons above every chat - shows only the actions that make sense for that conversation's type.",
+            "Sender names in the chat log are clickable - right-click for Copy Name, and Invite when they aren't already in your party/raid.",
+            "Shift-clicking an item or quest now links it into the SaveWhispers message box, the same as the default chat box.",
+            "Guild Chat and your currently active Party/Raid session can be replied to directly from SaveWhispers, not just read - old saved sessions stay read-only.",
+            "SaveWhispers now recognizes DM contacts who also have it installed and uses that to show a more accurate online status, with a small icon next to their name once confirmed.",
+        },
+    },
     {
         version = "V1.3",
         credit = "Developer: Gabbajoe",
