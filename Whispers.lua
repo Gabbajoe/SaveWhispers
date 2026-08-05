@@ -355,12 +355,13 @@ function SW:StoreWhisper(player, text, outgoing, guid)
         if err then self:Print(err) end
         return
     end
-    appendMessage(conversation, {
+    local message = {
         text = text,
         timestamp = self:Now(),
         outgoing = outgoing and true or false,
         guid = guid,
-    }, self:MessageLimitFor("dm"))
+    }
+    appendMessage(conversation, message, self:MessageLimitFor("dm"))
     conversation.lastActivity = self:Now()
     -- CHAT_MSG_WHISPER_INFORM (an outgoing whisper's delivery echo) only
     -- fires when the target is actually online and reachable, same as them
@@ -369,7 +370,7 @@ function SW:StoreWhisper(player, text, outgoing, guid)
     if not outgoing and (not self.ui or not self.ui.frame:IsShown() or self.ui.activeTab ~= "Messages" or self.ui.selectedKey ~= conversation.key) then
         conversation.unread = (tonumber(conversation.unread) or 0) + 1
     end
-    self:NotifyDataChanged()
+    self:NotifyDataChanged({ type = "message-added", conversation = conversation, message = message })
 end
 
 function SW:StoreGroupMessage(channel, player, text, guid)
@@ -393,22 +394,23 @@ function SW:StoreGroupMessage(channel, player, text, guid)
     local ownBase = ownKey and (string.match(ownKey, "^([^%-]+)") or ownKey)
     local senderBase = senderKey and (string.match(senderKey, "^([^%-]+)") or senderKey)
     local outgoing = ownBase and senderBase and ownBase == senderBase
-    appendMessage(conversation, {
+    local message = {
         text = text,
         sender = self:NormalizePlayerName(player) or "Unknown",
         timestamp = self:Now(),
         outgoing = outgoing and true or false,
         guid = guid,
-    -- conversation.channel (not the "channel" param) is always the
-    -- canonical kind ("guild"/"party"/"raid"/"channel") - the param itself
-    -- is a composite key like "channel:tradechat" for custom channels,
-    -- since StoreChannelMessage delegates here with that as the lookup key.
-    }, self:MessageLimitFor(conversation.channel))
+        -- conversation.channel (not the "channel" param) is always the
+        -- canonical kind ("guild"/"party"/"raid"/"channel") - the param itself
+        -- is a composite key like "channel:tradechat" for custom channels,
+        -- since StoreChannelMessage delegates here with that as the lookup key.
+    }
+    appendMessage(conversation, message, self:MessageLimitFor(conversation.channel))
     conversation.lastActivity = self:Now()
     if not outgoing and (not self.ui or not self.ui.frame:IsShown() or self.ui.activeTab ~= "Messages" or self.ui.selectedKey ~= conversation.key) then
         conversation.unread = (tonumber(conversation.unread) or 0) + 1
     end
-    self:NotifyDataChanged()
+    self:NotifyDataChanged({ type = "message-added", conversation = conversation, message = message })
 end
 
 function SW:StoreChannelMessage(channelName, player, text, guid)

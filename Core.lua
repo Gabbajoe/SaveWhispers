@@ -5,7 +5,7 @@ _G.SaveWhispers = SW
 
 SW.name = "SaveWhispers"
 SW.shortName = "SW"
-SW.version = "1.4.1"
+SW.version = "1.4.2"
 SW.addonName = ADDON_NAME or "SaveWhispers"
 SW.BackdropTemplate = BackdropTemplateMixin and "BackdropTemplate" or nil
 SW.initialized = false
@@ -163,9 +163,13 @@ function SW:SetSetting(key, value)
     if self.RefreshUI then self:RefreshUI() end
 end
 
-function SW:NotifyDataChanged()
-    if self.RefreshUI then self:RefreshUI() end
+function SW:NotifyDataChanged(change)
     if self.UpdateMinimapBadge then self:UpdateMinimapBadge() end
+    if change and self.QueueUIChange then
+        self:QueueUIChange(change)
+    elseif self.RefreshUI then
+        self:RefreshUI()
+    end
 end
 
 function SW:ToggleMainFrame(show)

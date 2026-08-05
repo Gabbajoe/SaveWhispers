@@ -18,6 +18,38 @@ end
 -- every time is what caused the window-open stutter. Full history is still
 -- available in full via "Export Chat".
 local MAX_RENDERED_MESSAGES = 200
+local UI_CHANGE_DELAY = 0.10
+
+-- Chat events can arrive in bursts (guild/channel spam in particular). Keep
+-- the database synchronous, but coalesce their visual work into one pass.
+-- Changes for conversations other than the selected one only need the left
+-- list; rebuilding the expensive tokenized chat pane would be wasted work.
+function SW:QueueUIChange(change)
+    if not self.ui or not self.ui.frame or not self.ui.frame:IsShown() then return end
+    self.pendingUIChanges = self.pendingUIChanges or {}
+    local key = change.conversation and change.conversation.key
+    if key then self.pendingUIChanges[key] = change end
+    if self.uiChangeQueued then return end
+    self.uiChangeQueued = true
+    C_Timer.After(UI_CHANGE_DELAY, function()
+        SW.uiChangeQueued = false
+        local changes = SW.pendingUIChanges or {}
+        SW.pendingUIChanges = nil
+        if not SW.ui or not SW.ui.frame or not SW.ui.frame:IsShown() then return end
+        if SW.ui.activeTab ~= "Messages" then
+            SW:RefreshUI()
+            return
+        end
+        local selectedChange = changes[SW.ui.selectedKey]
+        -- Always refresh the inexpensive list: activity sorting and unread
+        -- counters may have changed. Refresh the token-heavy chat only when
+        -- its own conversation received data.
+        SW:RefreshMessagesPanel(true)
+        if selectedChange and not SW:AppendChatMessage(selectedChange.conversation, selectedChange.message) then
+            SW:RefreshChatPanel()
+        end
+    end)
+end
 
 -- Chat text scale used to call SetTextHeight(px), which scales the glyphs
 -- of whatever size the font was already rendered at rather than asking the
@@ -1249,7 +1281,7 @@ local function createConversationRow(parent)
     return row
 end
 
-function SW:RefreshMessagesPanel()
+function SW:RefreshMessagesPanel(skipChat)
     local panel = self.ui.panels.Messages
     if not panel then return end
     local conversations = self:GetSortedConversations(false)
@@ -1394,7 +1426,7 @@ function SW:RefreshMessagesPanel()
     end
     poolFinish(content)
     content:SetSize(listWidth, math.max(panel.list:GetHeight(), -y + 4))
-    self:RefreshChatPanel()
+    if not skipChat then self:RefreshChatPanel() end
 end
 
 -- A Button wrapping the line's FontString, rather than relying on
@@ -2178,6 +2210,152 @@ function SW:RefreshChatPanel()
     panel.chatLoadingMore = nil
     panel.lastRenderKey = self.ui.selectedKey
     panel.lastRenderCount = #(conversation.messages or {})
+    panel.appendState = {
+        key = self.ui.selectedKey,
+        y = y,
+        lastDayKey = lastDayKey,
+        width = width,
+        appended = 0,
+    }
+end
+
+-- Fast path for the common case: exactly one new message was appended to the
+-- currently visible, unfiltered conversation. It deliberately reuses the
+-- existing pools without resetting them. Every 25 appends the caller falls
+-- back to RefreshChatPanel, reclaiming widgets that have moved outside the
+-- normal 200-message render window.
+function SW:AppendChatMessage(conversation, message)
+    local panel = self.ui and self.ui.panels and self.ui.panels.Messages
+    local state = panel and panel.appendState
+    if not panel or not state or not conversation or not message then return false end
+    if state.key ~= self.ui.selectedKey or conversation.key ~= self.ui.selectedKey then return false end
+    if panel.searchAllChats or (panel.chatSearchText and panel.chatSearchText ~= "") then return false end
+    if panel.chatLoadingMore or panel.scrollToMessage or (state.appended or 0) >= 25 then return false end
+    if panel.lastRenderCount ~= #(conversation.messages or {}) - 1 then return false end
+    local content = panel.chat.content
+    local width = math.max(340, panel.chat:GetWidth() - 5)
+    if math.abs(width - (state.width or width)) > 1 then return false end
+
+    local previousScroll = panel.chat:GetVerticalScroll()
+    local previousRange = panel.chat:GetVerticalScrollRange()
+    local wasNearBottom = previousRange <= 0 or previousScroll >= previousRange - 40
+    local y = state.y
+    local dayKey = date("%Y-%m-%d", message.timestamp or 0)
+    if dayKey ~= state.lastDayKey then
+        local todayKey = date("%Y-%m-%d")
+        local yesterdayKey = date("%Y-%m-%d", time() - 86400)
+        local label = dayKey == todayKey and "Today"
+            or (dayKey == yesterdayKey and "Yesterday" or date("%B %d, %Y", message.timestamp or 0))
+        local separator = poolRow(content, createChatLine)
+        separator.link = nil
+        separator.text:SetJustifyH("CENTER")
+        separator.text:SetText("---- " .. label .. " ----")
+        separator.text:SetTextColor(0.62, 0.62, 0.62)
+        separator:ClearAllPoints()
+        separator:SetPoint("TOPLEFT", content, "TOPLEFT", 8, y)
+        separator.text:SetWidth(width - 16)
+        if separator.text.SetFont then separator.text:SetFont(CHAT_FONT_PATH, 12, CHAT_FONT_FLAGS) end
+        separator:SetSize(width - 16, 16)
+        y = y - 20
+        state.lastDayKey = dayKey
+    end
+
+    if message.system then
+        local note = poolRow(content, createChatLine)
+        note.link = nil
+        note.text:SetJustifyH("CENTER")
+        note.text:SetText("-- " .. message.text .. " --")
+        note.text:SetTextColor(0.95, 0.75, 0.18)
+        note:ClearAllPoints()
+        note:SetPoint("TOPLEFT", content, "TOPLEFT", 8, y)
+        note.text:SetWidth(width - 16)
+        if note.text.SetFont then note.text:SetFont(CHAT_FONT_PATH, 12, CHAT_FONT_FLAGS) end
+        note:SetSize(width - 16, 16)
+        y = y - 20
+    else
+        local messageStartY = y
+        panel.messageYPositions = panel.messageYPositions or {}
+        panel.messageYPositions[message] = messageStartY
+        local bookmarkIcon = poolBookmarkIcon(content)
+        bookmarkIcon:ClearAllPoints()
+        bookmarkIcon:SetPoint("TOPLEFT", content, "TOPLEFT", 4, messageStartY)
+        bookmarkIcon.texture:SetVertexColor(message.bookmarked and 1 or 0.5, message.bookmarked and 0.82 or 0.5, message.bookmarked and 0 or 0.5, message.bookmarked and 1 or 0.6)
+        bookmarkIcon:SetScript("OnClick", function()
+            SW:ToggleMessageBookmark(conversation, message)
+            SW:RefreshUI()
+        end)
+        local r, g, b = chatColor(message.outgoing)
+        local speaker, nameColor, linkName
+        if message.outgoing then
+            speaker = "You"
+            linkName = UnitName and UnitName("player") or nil
+            if UnitClass then
+                local _, englishClass = UnitClass("player")
+                local color = englishClass and RAID_CLASS_COLORS and RAID_CLASS_COLORS[englishClass]
+                if color then nameColor = string.format("%02x%02x%02x", color.r * 255, color.g * 255, color.b * 255) end
+            end
+        else
+            linkName = message.sender or conversation.name
+            speaker = splitRealm(linkName)
+            nameColor = classColorHex(message.guid)
+        end
+        if not nameColor then nameColor = string.format("%02x%02x%02x", r * 255, g * 255, b * 255) end
+        local speakerText = linkName
+            and ("|cff" .. nameColor .. "|Hplayer:" .. linkName .. "|h" .. speaker .. ":|h|r")
+            or ("|cff" .. nameColor .. speaker .. ":|r")
+        local timeColor = message.bookmarked and "ffe066" or "808080"
+        local fullText = "|cff" .. timeColor .. "[" .. date("%H:%M:%S", message.timestamp or 0) .. "]|r "
+            .. speakerText .. " " .. replaceIconExpressions(colorizeQuestLinks(synthesizeQuestieLinks(message.text)))
+        local fontHeight = math.max(12, math.floor(13 * (tonumber(self.DB.settings.chatScale) or 1)))
+        local lineHeight = fontHeight + 4
+        local spaceWidth = math.max(4, math.floor(fontHeight * 0.3))
+        local textIndent, availableWidth = 18, width - 34
+        local x, first = 0, true
+        for _, token in ipairs(tokenizeMessage(fullText)) do
+            local widget, tokenWidth
+            if token.kind == "link" then
+                widget = poolLinkToken(content)
+                widget.text:SetText(token.text)
+                widget.link = token.link
+                if widget.text.SetFont then widget.text:SetFont(CHAT_FONT_PATH, fontHeight, CHAT_FONT_FLAGS) end
+                tokenWidth = widget.text:GetStringWidth() or 10
+            else
+                widget = poolWordToken(content)
+                widget:SetText(token.text)
+                widget:SetTextColor(0.92, 0.92, 0.92)
+                if widget.SetFont then widget:SetFont(CHAT_FONT_PATH, fontHeight, CHAT_FONT_FLAGS) end
+                tokenWidth = widget:GetStringWidth() or 10
+            end
+            if not first and x + spaceWidth + tokenWidth > availableWidth then x, y, first = 0, y - lineHeight, true end
+            if not first then x = x + spaceWidth end
+            widget:ClearAllPoints()
+            widget:SetPoint("TOPLEFT", content, "TOPLEFT", 8 + textIndent + x, y)
+            if token.kind == "link" then widget:SetSize(tokenWidth, lineHeight - 4) end
+            x, first = x + tokenWidth, false
+        end
+        y = y - lineHeight - 4
+    end
+
+    state.y = y
+    state.appended = (state.appended or 0) + 1
+    panel.lastRenderCount = #(conversation.messages or {})
+    content:SetSize(width, math.max(panel.chat:GetHeight(), -y + 8))
+    panel.chat:UpdateScrollChildRect()
+    panel.chatSyncingScroll = true
+    if wasNearBottom then
+        panel.chat:SetVerticalScroll(panel.chat:GetVerticalScrollRange())
+        panel.newMessagesWhileScrolled = 0
+        panel.newMessagesPill:Hide()
+    else
+        panel.chat:SetVerticalScroll(math.min(previousScroll, panel.chat:GetVerticalScrollRange()))
+        panel.newMessagesWhileScrolled = (panel.newMessagesWhileScrolled or 0) + 1
+        panel.newMessagesPill:SetText(panel.newMessagesWhileScrolled == 1 and "1 new message - click to jump"
+            or (panel.newMessagesWhileScrolled .. " new messages - click to jump"))
+        fitButton(panel.newMessagesPill, 16)
+        panel.newMessagesPill:Show()
+    end
+    panel.chatSyncingScroll = false
+    return true
 end
 
 -- Watchlist/Pin/Delete/Copy Name/Export Chat used to be a row of buttons
@@ -3386,6 +3564,15 @@ function SW:RefreshSettingsPanel()
 end
 
 local CHANGELOG = {
+    {
+        version = "V1.4.2",
+        credit = "Developer: Gabbajoe",
+        entries = {
+            "Improved performance during busy Guild, Party/Raid and channel chat by batching bursts of UI updates.",
+            "Messages arriving in another conversation no longer rebuild the currently open chat history.",
+            "New messages in the open conversation are appended incrementally instead of re-tokenizing and laying out the complete visible history every time, with periodic safe rebuilds to keep widget usage bounded.",
+        },
+    },
     {
         version = "V1.4.1",
         credit = "Developer: Gabbajoe",

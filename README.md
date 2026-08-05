@@ -1,4 +1,4 @@
-# SaveWhispers (SW) — V1.4.1
+# SaveWhispers (SW) — V1.4.2
 
 SaveWhispers is a persistent WhatsApp-style whisper inbox for WoW Classic. Incoming and outgoing whispers, plus Guild, Party, Raid and manually added channel chat, are stored locally until you remove the conversation. The window uses the game's own Blizzard dialog art, so it looks and feels like a native part of the UI.
 
@@ -38,6 +38,12 @@ Open it with `/sw` or the movable minimap button.
 - Resizable, draggable window using the game's own Blizzard window art; behaves like a normal Blizzard frame (can be covered by other windows, click to bring to front, closes with Escape).
 
 ## Changelog
+
+### V1.4.2 (Developer: Gabbajoe)
+
+- Improved performance during busy Guild, Party/Raid and channel chat by batching bursts of UI updates.
+- Messages arriving in another conversation no longer rebuild the currently open chat history.
+- New messages in the open conversation are appended incrementally instead of re-tokenizing and laying out the complete visible history every time, with periodic safe rebuilds to keep widget usage bounded.
 
 ### V1.4.1 (Developer: Gabbajoe)
 

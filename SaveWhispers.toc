@@ -1,9 +1,9 @@
 ## Interface: 11509
 ## IconTexture: Interface\AddOns\SaveWhispers\assets\savewhispers_icon_classic
-## Title: SaveWhispers v1.4.1 |cffef4f91SW|r
+## Title: SaveWhispers v1.4.2 |cffef4f91SW|r
 ## Notes: A private, persistent whisper inbox for World of Warcraft Classic.
 ## Author: SaveWhispers, Gabbajoe
-## Version: 1.4.1
+## Version: 1.4.2
 ## SavedVariables: SaveWhispersDB
 ## Category: Chat
 ## X-Category: Chat
