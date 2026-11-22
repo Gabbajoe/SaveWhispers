@@ -100,3 +100,22 @@ assert(conversation.unread == 0 and badges == 2)
 SW:MarkVisibleConversationRead()
 assert(badges == 2)
 print('PASS: opening selected guild/DM clears unread and badge; hidden window, other tabs and global search preserve unread')
+
+SW.DB.groupChats.guild = nil
+local guildChat = SW:EnsureGroupConversation("guild")
+shown = false
+guildChat.unread = 3
+conversation.unread = 7
+local changes = 0
+SW.NotifyDataChanged = function(_, change)
+    assert(change.conversation == guildChat)
+    changes = changes + 1
+end
+SW:StoreGroupMessage("guild", "Someone-Realm", "incoming")
+assert(guildChat.unread == 4)
+SW:StoreGroupMessage("guild", "Tester-Realm", "my reply")
+assert(guildChat.unread == 0 and conversation.unread == 7)
+assert(#guildChat.messages == 2 and guildChat.messages[2].outgoing and changes == 2)
+SW:StoreGroupMessage("guild", "Someone-Realm", "next unread")
+assert(guildChat.unread == 1)
+print('PASS: own guild echo clears unread with window closed, preserves other chats, next incoming counts again')

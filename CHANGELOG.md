@@ -1,3 +1,3 @@
-# v1.5.2 — Clear unread counts when opening a chat
+# v1.5.3 — Mark Guild Chat read when sending
 
-- Fixed unread counters when reopening the inbox or returning to Messages: the displayed conversation is marked as read immediately, including its minimap badge, without clicking the chat again.
+- Sending a Guild Chat message now marks Guild Chat as read, including the minimap badge, even when the inbox is closed.

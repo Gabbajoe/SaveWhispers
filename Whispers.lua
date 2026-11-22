@@ -407,7 +407,10 @@ function SW:StoreGroupMessage(channel, player, text, guid)
     }
     appendMessage(conversation, message, self:MessageLimitFor(conversation.channel))
     conversation.lastActivity = self:Now()
-    if not outgoing and (not self.ui or not self.ui.frame:IsShown() or self.ui.activeTab ~= "Messages" or self.ui.selectedKey ~= conversation.key) then
+    if outgoing and conversation.channel == "guild" then
+        -- The server echo confirms the player participated, even with our UI closed.
+        conversation.unread = 0
+    elseif not outgoing and (not self.ui or not self.ui.frame:IsShown() or self.ui.activeTab ~= "Messages" or self.ui.selectedKey ~= conversation.key) then
         conversation.unread = (tonumber(conversation.unread) or 0) + 1
     end
     self:NotifyDataChanged({ type = "message-added", conversation = conversation, message = message })

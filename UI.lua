@@ -3566,6 +3566,13 @@ end
 
 local CHANGELOG = {
     {
+        version = "V1.5.3",
+        credit = "Developer: Gabbajoe",
+        entries = {
+            "Sending a Guild Chat message now marks Guild Chat as read, including the minimap badge, even when the inbox is closed.",
+        },
+    },
+    {
         version = "V1.5.2",
         credit = "Developer: Gabbajoe",
         entries = {
