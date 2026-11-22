@@ -3566,6 +3566,13 @@ end
 
 local CHANGELOG = {
     {
+        version = "V1.5.4",
+        credit = "Developer: Gabbajoe",
+        entries = {
+            "Fixed own-message detection in Forever when chat uses a full display name: sender GUID now identifies your messages, so writing through the normal Guild Chat clears unread counts even with SaveWhispers closed.",
+        },
+    },
+    {
         version = "V1.5.3",
         credit = "Developer: Gabbajoe",
         entries = {

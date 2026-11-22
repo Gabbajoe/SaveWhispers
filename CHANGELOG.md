@@ -1,3 +1,3 @@
-# v1.5.3 — Mark Guild Chat read when sending
+# v1.5.4 — Recognize your own Forever chat messages
 
-- Sending a Guild Chat message now marks Guild Chat as read, including the minimap badge, even when the inbox is closed.
+- Fixed own-message detection in Forever when chat uses a full display name: sender GUID now identifies your messages, so writing through the normal Guild Chat clears unread counts even with SaveWhispers closed.

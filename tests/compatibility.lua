@@ -119,3 +119,22 @@ assert(#guildChat.messages == 2 and guildChat.messages[2].outgoing and changes =
 SW:StoreGroupMessage("guild", "Someone-Realm", "next unread")
 assert(guildChat.unread == 1)
 print('PASS: own guild echo clears unread with window closed, preserves other chats, next incoming counts again')
+
+-- Reproduce Forever's actual short UnitName / full chat display-name mismatch
+-- through the event handler, as sent by Blizzard's normal chat window.
+UnitName = function() return "Gabbaliator" end
+UnitGUID = function() return "Player-6855-00402769" end
+shown = false
+guildChat.unread = 5
+local function guildEvent(name, guid)
+    frame.onEvent(frame, "CHAT_MSG_GUILD", "test", name, nil, nil, nil, nil, nil, nil, nil, nil, nil, guid)
+end
+guildEvent("Gabbaliator Gabbenstein", "Player-6855-00402769")
+assert(guildChat.unread == 0 and guildChat.messages[#guildChat.messages].outgoing)
+guildEvent("Gabbaliator Gabbenstein", "Player-6855-00402769")
+assert(guildChat.unread == 0)
+guildEvent("Gabbaliator", "Player-OTHER")
+assert(guildChat.unread == 1 and not guildChat.messages[#guildChat.messages].outgoing)
+guildEvent("Gabbaliator-Realm", nil)
+assert(guildChat.unread == 0) -- Legacy fallback without a sender GUID.
+print('PASS: normal guild chat event with full Forever name, repeated own messages, different GUID, legacy fallback')

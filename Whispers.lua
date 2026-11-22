@@ -393,7 +393,16 @@ function SW:StoreGroupMessage(channel, player, text, guid)
     local senderKey = self:GetPlayerKey(player)
     local ownBase = ownKey and (string.match(ownKey, "^([^%-]+)") or ownKey)
     local senderBase = senderKey and (string.match(senderKey, "^([^%-]+)") or senderKey)
-    local outgoing = ownBase and senderBase and ownBase == senderBase
+    -- Forever chat can supply a full display name unlike UnitName("player").
+    -- Prefer identity over display text; never let a matching name override
+    -- a different GUID (e.g. the same character name on another realm).
+    local ownGUID = UnitGUID and UnitGUID("player")
+    local outgoing
+    if guid and guid ~= "" and ownGUID and ownGUID ~= "" then
+        outgoing = guid == ownGUID
+    else
+        outgoing = ownBase and senderBase and ownBase == senderBase
+    end
     local message = {
         text = text,
         sender = self:NormalizePlayerName(player) or "Unknown",
