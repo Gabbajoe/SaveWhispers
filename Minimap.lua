@@ -69,8 +69,7 @@ function SW:CreateMinimapButton()
     button:SetScript("OnClick", function(self, clicked)
         if self.dragged then self.dragged = nil; return end
         if clicked == "RightButton" then
-            SW:SetSetting("showMinimap", false)
-            SW:Print("Minimap button hidden. Re-enable it in Settings or with /sw.")
+            SW:MarkAllMessagesRead()
         else
             SW:ToggleMainFrame()
         end
@@ -88,7 +87,7 @@ function SW:CreateMinimapButton()
         GameTooltip:SetText("SaveWhispers (SW)")
         GameTooltip:AddLine("Left-click: Open / close", 1, 1, 1)
         GameTooltip:AddLine("Drag: Move button", 1, 1, 1)
-        GameTooltip:AddLine("Right-click: Hide", 1, 1, 1)
+        GameTooltip:AddLine("Right-click: Mark all messages as read", 1, 1, 1)
         GameTooltip:Show()
     end)
     button:SetScript("OnLeave", function() GameTooltip:Hide() end)

@@ -776,3 +776,13 @@ function SW:GetNameSuggestions(prefix)
     while #names > 8 do table.remove(names) end
     return names
 end
+
+function SW:MarkAllMessagesRead()
+    if not self.DB then return end
+    for _, collection in ipairs({ self.DB.conversations or {}, self.DB.groupChats or {} }) do
+        for _, conversation in pairs(collection) do
+            if type(conversation) == "table" then conversation.unread = 0 end
+        end
+    end
+    self:NotifyDataChanged()
+end

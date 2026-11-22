@@ -5,7 +5,7 @@ _G.SaveWhispers = SW
 
 SW.name = "SaveWhispers"
 SW.shortName = "SW"
-SW.version = "1.5.0"
+SW.version = "1.5.1"
 SW.addonName = ADDON_NAME or "SaveWhispers"
 SW.BackdropTemplate = BackdropTemplateMixin and "BackdropTemplate" or nil
 SW.initialized = false

@@ -59,3 +59,17 @@ SW.DB.settings.showMinimap = false
 entry.func()
 assert(toggles == 1)
 print('PASS: optional compartment, duplicate prevention, opening with hidden minimap button')
+
+conversation.unread = 3
+local messages = conversation.messages
+for _, kind in ipairs({'guild', 'party', 'raid', 'channel'}) do
+    SW.DB.groupChats[kind] = {unread=4, messages={}}
+end
+local notifications = 0
+SW.NotifyDataChanged = function() notifications = notifications + 1 end
+SW.DB.settings.showMinimap = true
+SW:MarkAllMessagesRead()
+assert(conversation.unread == 0 and conversation.messages == messages and #messages == 2)
+for _, item in pairs(SW.DB.groupChats) do assert(item.unread == 0) end
+assert(SW.DB.settings.showMinimap == true and notifications == 1)
+print('PASS: mark all categories read, preserve history and minimap visibility, notify UI')

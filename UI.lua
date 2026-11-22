@@ -3565,6 +3565,13 @@ end
 
 local CHANGELOG = {
     {
+        version = "V1.5.1",
+        credit = "Developer: Gabbajoe",
+        entries = {
+            "Right-clicking the minimap button now marks all messages as read across DMs, Guild, Party/Raid and channels. Hide the minimap button through Settings.",
+        },
+    },
+    {
         version = "V1.5.0",
         credit = "Developer: Gabbajoe",
         entries = {
