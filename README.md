@@ -1,12 +1,12 @@
-# SaveWhispers (SW) — V1.4.2
+# SaveWhispers (SW) — V1.5.0
 
-SaveWhispers is a persistent WhatsApp-style whisper inbox for WoW Classic. Incoming and outgoing whispers, plus Guild, Party, Raid and manually added channel chat, are stored locally until you remove the conversation. The window uses the game's own Blizzard dialog art, so it looks and feels like a native part of the UI.
+SaveWhispers is a persistent WhatsApp-style whisper inbox for WoW Classic Era and WoW Forever. Incoming and outgoing whispers, plus Guild, Party, Raid and manually added channel chat, are stored locally until you remove the conversation. The window uses the game's own Blizzard dialog art, so it looks and feels like a native part of the UI.
 
 ## Installation
 
-Copy this folder to `World of Warcraft/_classic_era_/Interface/AddOns/SaveWhispers` and enable **SaveWhispers** in the AddOns list.
+Copy this folder to `World of Warcraft/_classic_era_/Interface/AddOns/SaveWhispers` or `World of Warcraft/_forever_/Interface/AddOns/SaveWhispers` and enable **SaveWhispers** in the AddOns list.
 
-Open it with `/sw` or the movable minimap button.
+Open it with `/sw`, the movable minimap button, or Blizzard's numbered AddOns menu beside the minimap.
 
 ## Features
 
@@ -38,6 +38,13 @@ Open it with `/sw` or the movable minimap button.
 - Resizable, draggable window using the game's own Blizzard window art; behaves like a normal Blizzard frame (can be covered by other windows, click to bring to front, closes with Escape).
 
 ## Changelog
+
+### V1.5.0 (Developer: Gabbajoe)
+
+- Added WoW Forever support alongside Classic Era, with matching client TOCs and modern chat and friend APIs.
+- Added SaveWhispers to Blizzard's numbered AddOns menu beside the minimap; click to open or close the inbox, even when the minimap button is hidden.
+- Fixed minimap button placement on enlarged minimaps: the button follows the actual map dimensions and stays on the rim when resized.
+- Restricted chat payloads are skipped safely instead of being processed or saved.
 
 ### V1.4.2 (Developer: Gabbajoe)
 

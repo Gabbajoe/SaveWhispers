@@ -461,7 +461,16 @@ function SW:GetContactStatus(player)
         local status = statusForUnit("raid" .. index, player)
         if status then return status end
     end
-    if GetNumFriends and GetFriendInfo then
+    if C_FriendList and C_FriendList.GetNumFriends and C_FriendList.GetFriendInfoByIndex then
+        for index = 1, C_FriendList.GetNumFriends() do
+            local info = C_FriendList.GetFriendInfoByIndex(index)
+            if info and samePlayer(info.name, player) then
+                if not info.connected then return "offline" end
+                if info.afk or info.dnd then return "busy" end
+                return "online"
+            end
+        end
+    elseif GetNumFriends and GetFriendInfo then
         for index = 1, GetNumFriends() do
             local name, _, _, _, connected, status = GetFriendInfo(index)
             if samePlayer(name, player) then
@@ -527,8 +536,9 @@ function SW:SendWhisper(player, text)
     player = self:NormalizePlayerName(player)
     text = messageText(text)
     if not player or not text then return false, "Select a player and enter a message." end
-    if not SendChatMessage then return false, "Whispers are unavailable in this game client." end
-    SendChatMessage(text, "WHISPER", nil, player)
+    local sendChatMessage = C_ChatInfo and C_ChatInfo.SendChatMessage or SendChatMessage
+    if not sendChatMessage then return false, "Whispers are unavailable in this game client." end
+    sendChatMessage(text, "WHISPER", nil, player)
     return true
 end
 
@@ -557,7 +567,8 @@ function SW:SendConversationMessage(conversation, text)
 
     text = messageText(text)
     if not text then return false, "Enter a message first." end
-    if not SendChatMessage then return false, "Chat is unavailable in this game client." end
+    local sendChatMessage = C_ChatInfo and C_ChatInfo.SendChatMessage or SendChatMessage
+    if not sendChatMessage then return false, "Chat is unavailable in this game client." end
 
     local chatType
     if conversation.channel == "guild" then
@@ -575,7 +586,7 @@ function SW:SendConversationMessage(conversation, text)
 
     -- Do not add the outgoing message here: the normal CHAT_MSG_* echo is
     -- what records it, just like a message sent through Blizzard's chat box.
-    SendChatMessage(text, chatType)
+    sendChatMessage(text, chatType)
     return true
 end
 

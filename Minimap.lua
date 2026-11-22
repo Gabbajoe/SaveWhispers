@@ -2,9 +2,11 @@ local SW = _G.SaveWhispers
 
 local function place(button)
     local angle = math.rad(SW.DB.minimap.minimapPos or 220)
-    local radius = 82
+    -- Follow the actual minimap dimensions, including enlarged Forever maps.
+    local radiusX = Minimap:GetWidth() / 2 + 5
+    local radiusY = Minimap:GetHeight() / 2 + 5
     button:ClearAllPoints()
-    button:SetPoint("CENTER", Minimap, "CENTER", math.cos(angle) * radius, math.sin(angle) * radius)
+    button:SetPoint("CENTER", Minimap, "CENTER", math.cos(angle) * radiusX, math.sin(angle) * radiusY)
 end
 
 local function updateDrag(button)
@@ -91,6 +93,10 @@ function SW:CreateMinimapButton()
     end)
     button:SetScript("OnLeave", function() GameTooltip:Hide() end)
     self.ui.minimapButton = button
+    if not button.swSizeHooked then
+        Minimap:HookScript("OnSizeChanged", function() place(button) end)
+        button.swSizeHooked = true
+    end
     place(button)
     self:UpdateMinimapButton()
     self:UpdateMinimapBadge()
@@ -146,4 +152,16 @@ function SW:UpdateMinimapBadge()
     else
         button.badge:Hide()
     end
+end
+
+-- The numbered Blizzard AddOns menu remains available when our button is hidden.
+function SW:RegisterAddonCompartment()
+    if self.compartmentRegistered or not AddonCompartmentFrame or not AddonCompartmentFrame.RegisterAddon then return end
+    AddonCompartmentFrame:RegisterAddon({
+        text = "SaveWhispers",
+        icon = self:BrandIconPath("icon"),
+        notCheckable = true,
+        func = function() SW:ToggleMainFrame() end,
+    })
+    self.compartmentRegistered = true
 end

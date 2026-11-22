@@ -21,5 +21,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate Lua and compatibility
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y lua5.1
+          for file in *.lua; do luac5.1 -p "$file"; done
+          lua5.1 tests/compatibility.lua
+
       - name: Package and release
         uses: BigWigsMods/packager@v2

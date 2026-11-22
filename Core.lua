@@ -5,7 +5,7 @@ _G.SaveWhispers = SW
 
 SW.name = "SaveWhispers"
 SW.shortName = "SW"
-SW.version = "1.4.2"
+SW.version = "1.5.0"
 SW.addonName = ADDON_NAME or "SaveWhispers"
 SW.BackdropTemplate = BackdropTemplateMixin and "BackdropTemplate" or nil
 SW.initialized = false
@@ -21,6 +21,7 @@ function SW:Print(message)
 end
 
 function SW:Trim(value)
+    if issecretvalue and issecretvalue(value) then return "" end
     value = tostring(value or "")
     value = string.gsub(value, "^%s+", "")
     return string.gsub(value, "%s+$", "")
@@ -207,6 +208,7 @@ function SW:Initialize()
         self:Print("|cffff4444The window failed to load:|r " .. tostring(err))
     end
     self:CreateMinimapButton()
+    self:RegisterAddonCompartment()
     self:InstallSlashCommands()
     -- Lets other SaveWhispers installs answer a presence ping (see
     -- PingContact/OnAddonMessage in Whispers.lua) - unregistered prefixes
@@ -261,6 +263,12 @@ eventFrame:RegisterEvent("GROUP_JOINED")
 eventFrame:RegisterEvent("GROUP_LEFT")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 eventFrame:SetScript("OnEvent", function(_, event, ...)
+    -- Restricted chat payloads cannot be inspected or saved by addons.
+    if issecretvalue then
+        for index = 1, select("#", ...) do
+            if issecretvalue(select(index, ...)) then return end
+        end
+    end
     if event == "ADDON_LOADED" then
         local loadedName = ...
         if loadedName == SW.addonName then SW:InitDatabase() end
