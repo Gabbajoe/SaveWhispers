@@ -786,3 +786,18 @@ function SW:MarkAllMessagesRead()
     end
     self:NotifyDataChanged()
 end
+
+-- Called after the Messages panel has resolved its selected conversation.
+function SW:MarkVisibleConversationRead()
+    local ui = self.ui
+    if not ui or not ui.frame or not ui.frame:IsShown() or ui.activeTab ~= "Messages" then return end
+    local panel = ui.panels and ui.panels.Messages
+    if not panel then return end
+    -- Global results do not display the selected conversation itself.
+    if panel.searchAllChats and panel.chatSearchText and panel.chatSearchText ~= "" then return end
+    local conversation = self:GetConversation(ui.selectedKey)
+    if conversation and (tonumber(conversation.unread) or 0) > 0 then
+        conversation.unread = 0
+        if self.UpdateMinimapBadge then self:UpdateMinimapBadge() end
+    end
+end

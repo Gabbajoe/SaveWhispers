@@ -1313,6 +1313,7 @@ function SW:RefreshMessagesPanel(skipChat)
         if conversation.key == self.ui.selectedKey then selectedInView = true; break end
     end
     if not selectedInView and conversations[1] then self.ui.selectedKey = conversations[1].key end
+    self:MarkVisibleConversationRead()
     -- The count/limit shown here matches whichever filter pill is active -
     -- each category has its own separate "to keep" limit, so a single
     -- fixed "Conversations X/200" that never changed with the filter was
@@ -3564,6 +3565,13 @@ function SW:RefreshSettingsPanel()
 end
 
 local CHANGELOG = {
+    {
+        version = "V1.5.2",
+        credit = "Developer: Gabbajoe",
+        entries = {
+            "Fixed unread counters when reopening the inbox or returning to Messages: the displayed conversation is marked as read immediately, including its minimap badge, without clicking the chat again.",
+        },
+    },
     {
         version = "V1.5.1",
         credit = "Developer: Gabbajoe",

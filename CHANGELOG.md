@@ -1,3 +1,3 @@
-# v1.5.1 — Mark all messages as read
+# v1.5.2 — Clear unread counts when opening a chat
 
-- Right-clicking the minimap button now marks all messages as read across DMs, Guild, Party/Raid and channels. Hide the minimap button through Settings.
+- Fixed unread counters when reopening the inbox or returning to Messages: the displayed conversation is marked as read immediately, including its minimap badge, without clicking the chat again.

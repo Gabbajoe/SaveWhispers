@@ -73,3 +73,30 @@ assert(conversation.unread == 0 and conversation.messages == messages and #messa
 for _, item in pairs(SW.DB.groupChats) do assert(item.unread == 0) end
 assert(SW.DB.settings.showMinimap == true and notifications == 1)
 print('PASS: mark all categories read, preserve history and minimap visibility, notify UI')
+
+local shown, badges = false, 0
+SW.ui = {frame={IsShown=function() return shown end}, activeTab="Messages", selectedKey="guild", panels={Messages={}}}
+SW.UpdateMinimapBadge = function() badges = badges + 1 end
+local guild = SW.DB.groupChats.guild
+guild.unread = 5
+SW:MarkVisibleConversationRead()
+assert(guild.unread == 5) -- Background refresh must preserve unread messages.
+shown = true
+SW.ui.activeTab = "Settings"
+SW:MarkVisibleConversationRead()
+assert(guild.unread == 5)
+SW.ui.activeTab = "Messages"
+SW.ui.panels.Messages.searchAllChats = true
+SW.ui.panels.Messages.chatSearchText = "hello"
+SW:MarkVisibleConversationRead()
+assert(guild.unread == 5) -- Search results are not the selected chat.
+SW.ui.panels.Messages.chatSearchText = ""
+conversation.unread = 2
+SW:MarkVisibleConversationRead()
+assert(guild.unread == 0 and conversation.unread == 2 and badges == 1)
+SW.ui.selectedKey = conversation.key
+SW:MarkVisibleConversationRead()
+assert(conversation.unread == 0 and badges == 2)
+SW:MarkVisibleConversationRead()
+assert(badges == 2)
+print('PASS: opening selected guild/DM clears unread and badge; hidden window, other tabs and global search preserve unread')
